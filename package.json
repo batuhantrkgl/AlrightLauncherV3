@@ -1,0 +1,93 @@
+{
+  "name": "alright-launcher",
+  "version": "3.0.0",
+  "description": "Yet Another Minecraft Launcher",
+  "author": "Batuhantrkgl",
+  "main": "src/scripts/main.js",
+  "scripts": {
+    "start": "electron .",
+    "pack": "electron-builder --dir",
+    "build": "electron-builder build --win --x64 --config.asar=true",
+    "dist": "electron-builder --win --x64"
+  },
+  "build": {
+    "appId": "com.batuhantrkgl.alrightlauncher",
+    "productName": "Alright Launcher",
+    "copyright": "Copyright © 2021-2025",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/app.ico",
+      "artifactName": "${productName}-Setup-${version}.${ext}",
+      "requestedExecutionLevel": "asInvoker"
+    },
+    "linux": {
+      "icon": "build/build.png",
+      "target": [
+        "AppImage"
+      ]
+    },
+    "mac": {
+      "icon": "build/build.icns",
+      "target": [
+        "dmg"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "menuCategory": true
+    },
+    "files": [
+      "**/*",
+      "!**/node_modules/*/{CHANGELOG.md,README.md,README,readme.md,readme}",
+      "!**/.{git,svn,hg}",
+      "!**/node_modules/.bin",
+      "!**/*.{iml,o,hprof,orig,pyc,pyo,rbc,swp,csproj,sln,xproj}"
+    ],
+    "asar": true,
+    "asarUnpack": [
+      "node_modules/extract-zip/**/*",
+      "node_modules/yauzl/**/*",
+      "node_modules/fd-slicer/**/*",
+      "node_modules/buffer-crc32/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "build/",
+        "to": "build",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ]
+  },
+  "dependencies": {
+    "buffer-crc32": "^1.0.0",
+    "check-disk-space": "^3.4.0",
+    "cli-progress": "^3.12.0",
+    "dotenv": "^16.0.3",
+    "electron-dl": "^4.0.0",
+    "extract-zip": "^2.0.1",
+    "fd-slicer": "^1.1.0",
+    "fs-extra": "^11.2.0",
+    "node-fetch": "^2.6.7",
+    "path": "^0.12.7",
+    "yauzl": "^3.2.0"
+  },
+  "devDependencies": {
+    "electron": "^28.1.0",
+    "electron-builder": "^24.9.1"
+  }
+}

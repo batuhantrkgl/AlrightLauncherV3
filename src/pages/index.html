@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; script-src 'self'; connect-src 'self' https://piston-meta.mojang.com https://launchermeta.mojang.com https://resources.download.minecraft.net https://libraries.minecraft.net;">
+    <title>AlrightLauncher</title>
+    <link rel="stylesheet" href="../styles/styles.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700&family=Poppins:wght@400;600;700&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+    <style>
+        .settings-modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.7);
+            backdrop-filter: blur(5px);
+            z-index: 2000;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .settings-content {
+            background: var(--panel-bg);
+            border-radius: 15px;
+            padding: 2rem;
+            width: 80%;
+            max-width: 600px;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+    </style>
+</head>
+<body>
+    <div class="left-panel">
+        <div>
+            <h1>Yet<br>Another<br>Minecraft<br>Launcher</h1>
+            <h3>Based on Javascript (Sadly)</h3>
+        </div>
+        <!-- <h3>Standalone.</h3> -->
+        <h3 id="username" contenteditable="true" spellcheck="false">Player</h3>
+    </div>
+
+    <div class="right-panel">
+        <div>
+            
+        </div>
+        <div class="bottom-container">
+            <div class="version-container">
+                <h2 id="version">Select a version Please.</h2>
+                <div id="version-dropdown" class="version-dropdown"></div>
+            </div>
+            <button class="play-button">Play</button>
+        </div>
+    </div>
+
+    <button class="debug-toggle">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+        </svg>
+    </button>
+
+    <div class="settings-modal" id="settingsModal">
+        <div class="settings-content">
+            <div class="settings-header">
+                <h2>Settings</h2>
+                <button class="settings-close">✕</button>
+            </div>
+
+            <div class="settings-section">
+                <h3>Memory Settings</h3>
+                <div class="setting-item">
+                    <label>Maximum RAM: <span id="ram-value">2048</span> MB</label>
+                    <input type="range" class="memory-slider" min="1024" max="16384" step="512" value="2048" id="ram-slider">
+                </div>
+            </div>
+
+            <div class="server-creator">
+                <h3>Local Server</h3>
+                <div class="server-status-panel">
+                    <div class="server-list" id="serverList">
+                        <!-- Servers will be listed here dynamically -->
+                    </div>
+                    <div class="server-logs" id="serverLogs">
+                        <div class="log-header">
+                            <h4>Server Logs</h4>
+                            <button class="clear-logs">Clear</button>
+                        </div>
+                        <pre class="log-content" id="serverLogContent"></pre>
+                    </div>
+                </div>
+                <div class="server-config">
+                    <h4>Server Configuration</h4>
+                    <form class="server-form" id="serverForm">
+                        <input type="text" placeholder="Server Name" id="serverName" required>
+                        <input type="number" placeholder="Port (default: 25565)" id="serverPort" value="25565">
+                        <select id="serverVersion" required>
+                            <!-- Versions loaded dynamically -->
+                        </select>
+                        <div class="server-settings">
+                            <div class="setting-group">
+                                <label>Server Memory (MB)</label>
+                                <input type="number" id="serverMemory" value="2048" min="512" step="512">
+                            </div>
+                            <div class="setting-group">
+                                <label>Max Players</label>
+                                <input type="number" id="maxPlayers" value="20" min="1">
+                            </div>
+                            <div class="setting-group">
+                                <label>View Distance</label>
+                                <input type="number" id="viewDistance" value="10" min="3" max="32">
+                            </div>
+                            <div class="setting-group">
+                                <label>Difficulty</label>
+                                <select id="difficulty">
+                                    <option value="peaceful">Peaceful</option>
+                                    <option value="easy">Easy</option>
+                                    <option value="normal" selected>Normal</option>
+                                    <option value="hard">Hard</option>
+                                </select>
+                            </div>
+                            <div class="setting-group">
+                                <label>Game Mode</label>
+                                <select id="gamemode">
+                                    <option value="survival" selected>Survival</option>
+                                    <option value="creative">Creative</option>
+                                    <option value="adventure">Adventure</option>
+                                </select>
+                            </div>
+                            <div class="setting-checks">
+                                <label>
+                                    <input type="checkbox" id="pvp" checked>
+                                    Enable PvP
+                                </label>
+                                <label>
+                                    <input type="checkbox" id="spawnAnimals" checked>
+                                    Spawn Animals
+                                </label>
+                                <label>
+                                    <input type="checkbox" id="spawnMonsters" checked>
+                                    Spawn Monsters
+                                </label>
+                            </div>
+                        </div>
+                        <button type="submit" class="settings-button">Create Server</button>
+                    </form>
+                </div>
+            </div>
+
+            <div class="modloader-section">
+                <h3>Mod Loaders</h3>
+                <div class="modloader-card" id="forge">
+                    <h4>Forge</h4>
+                    <p>Traditional modding platform</p>
+                </div>
+                <div class="modloader-card" id="fabric">
+                    <h4>Fabric</h4>
+                    <p>Lightweight modern modding</p>
+                </div>
+            </div>
+
+            <div class="settings-section">
+                <h3>Appearance</h3>
+                <div class="setting-item">
+                    <label>Dark Mode</label>
+                    <label class="theme-switch">
+                        <input type="checkbox" id="theme-toggle">
+                        <span class="slider"></span>
+                    </label>
+                </div>
+            </div>
+
+            <div class="settings-section">
+                <h3>Game Settings</h3>
+                <div class="setting-item">
+                    <label>Full Screen</label>
+                    <label class="theme-switch">
+                        <input type="checkbox" id="fullscreen-toggle">
+                        <span class="slider"></span>
+                    </label>
+                </div>
+            </div>
+
+            <div class="settings-section">
+                <h3>Portable Version</h3>
+                <div class="setting-item">
+                    <button id="createStandalone" class="settings-button">
+                        Create Standalone USB Media
+                    </button>
+                    <p class="setting-description">
+                        Creates a portable version with selected game version and Java runtime
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="debug-panel">
+        <div class="debug-content" id="logContent"></div>
+        <div class="debug-controls">
+            <button class="debug-button" id="clearLogs">Clear Logs</button>
+            <button class="debug-button" id="saveLogs">Save Logs</button>
+            <button class="debug-button" id="toggleAutoscroll">Autoscroll</button>
+        </div>
+    </div>
+
+    <div class="modal" id="versionSelectModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Select Minecraft Versions</h2>
+                <button class="modal-close">✕</button>
+            </div>
+            <div class="modal-body">
+                <div class="version-select-controls">
+                    <button id="selectAllVersions">Select All</button>
+                    <button id="unselectAllVersions">Unselect All</button>
+                    <input type="text" id="versionSearch" placeholder="Search versions...">
+                </div>
+                <div class="version-list" id="versionSelectList">
+                    <!-- Versions will be added here dynamically -->
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button id="confirmVersionSelect" class="modal-button primary">Create Standalone</button>
+                <button class="modal-button secondary modal-close">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal" id="crashReportModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Minecraft Crashed</h2>
+                <button class="modal-close">✕</button>
+            </div>
+            <div class="modal-body">
+                <div class="crash-info">
+                    <p>The game has crashed. Here's what happened:</p>
+                    <pre id="crashContent" class="crash-content"></pre>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button id="copyCrashReport" class="modal-button primary">Copy Report</button>
+                <button class="modal-button secondary modal-close">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="../scripts/renderer.js"></script>
+</body>
+</html>
