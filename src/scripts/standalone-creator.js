@@ -2,200 +2,184 @@ const fs = require('fs-extra');
 const path = require('path');
 const logger = require('./logger');
 const MinecraftInstaller = require('./minecraft-installer');
-const MinecraftLauncher = require('./minecraft-launcher');
-const cliProgress = require('cli-progress');
 
 class StandaloneCreator {
-    constructor() {
-        this.requiredSpace = 1024 * 1024 * 1024; // 1GB minimum per version
-        this.progressBar = null;
+    constructor(launcherPath) {
+        this.requiredSpace = 1024 * 1024 * 1024;
+        this.launcherPath = launcherPath || path.join(process.env.APPDATA, '.alrightlauncher');
     }
 
-    updateProgress(action, percent, details = '') {
-        if (!this.progressBar) {
-            this.progressBar = new cliProgress.SingleBar({
-                format: `${action} |{bar}| {percentage}% | {details}`,
-                barCompleteChar: '\u2588',
-                barIncompleteChar: '\u2591',
-                hideCursor: true,
-                clearOnComplete: true
-            });
-            this.progressBar.start(100, 0, { details });
-        }
-        this.progressBar.update(percent, { details });
-        if (percent >= 100) {
-            this.progressBar.stop();
-            this.progressBar = null;
-        }
-    }
-
-    async copyWithProgress(src, dest, description) {
-        const stats = await fs.stat(src);
-        let copied = 0;
-
-        await fs.copy(src, dest, {
-            filter: (src, dest) => {
-                copied += 1;
-                const percent = Math.min(100, Math.round((copied / stats.size) * 100));
-                this.updateProgress('Copying', percent, description);
-                return true;
-            }
-        });
-    }
-
-    async installVersion(version, targetDir, installer) {
-        logger.info(`Installing version ${version} to ${targetDir}`);
-        
-        // Create version directory
-        const versionDir = path.join(targetDir, 'minecraft', 'versions', version);
-        await fs.ensureDir(versionDir);
-
-        // Install the version
-        const success = await installer.installVersion(version, targetDir);
-        if (!success) {
-            throw new Error(`Failed to install version ${version}`);
-        }
-
-        logger.info(`Successfully installed version ${version}`);
-        return true;
-    }
-
-    async testVersion(version, targetDir, javaPath) {
-        logger.info(`Testing version ${version}`);
-        
-        const testLauncher = new MinecraftLauncher(path.join(targetDir, 'minecraft'));
-        testLauncher.javaPath = javaPath;
-
-        return new Promise(async (resolve) => {
-            try {
-                // Launch the game
-                const process = await testLauncher.launch(version, 'TestUser', true);
+    async getInstalledVersions() {
+        const versionsPath = path.join(this.launcherPath, 'versions');
+        try {
+            const dirs = await fs.readdir(versionsPath);
+            const installedVersions = [];
+            
+            for (const dir of dirs) {
+                const versionJsonPath = path.join(versionsPath, dir, `${dir}.json`);
+                const versionJarPath = path.join(versionsPath, dir, `${dir}.jar`);
                 
-                // Set timeout to kill the process after 10 seconds
-                setTimeout(() => {
-                    try {
-                        process.kill();
-                        logger.info(`Successfully tested version ${version}`);
-                        resolve(true);
-                    } catch (err) {
-                        logger.error(`Error killing test process for ${version}: ${err.message}`);
-                        resolve(false);
-                    }
-                }, 10000);
-
-                // Handle process errors
-                process.on('error', (err) => {
-                    logger.error(`Test launch error for ${version}: ${err.message}`);
-                    resolve(false);
-                });
-            } catch (error) {
-                logger.error(`Failed to test version ${version}: ${error.message}`);
-                resolve(false);
+                if (await fs.pathExists(versionJsonPath) && await fs.pathExists(versionJarPath)) {
+                    installedVersions.push(dir);
+                }
             }
-        });
+            
+            return installedVersions;
+        } catch (error) {
+            logger.error(`Failed to get installed versions from ${versionsPath}: ${error}`);
+            return [];
+        }
     }
 
     async createStandalone(targetPath, versions, javaPath) {
         try {
-            logger.info(`Starting standalone creation at: ${targetPath} for versions: ${versions.join(', ')}`);
-            let totalSteps = versions.length * 2 + 3; // Download + Install per version + Java + Launcher + Config
-            let currentStep = 0;
+            logger.info('Starting standalone creation...');
+            logger.info(`Using launcher path: ${this.launcherPath}`);
             
-            // Create directory structure
-            this.updateProgress('Creating directories', 0, 'Setting up folder structure');
-            const paths = {
+            // Verify versions are installed
+            const installedVersions = await this.getInstalledVersions();
+            const missingVersions = versions.filter(v => !installedVersions.includes(v));
+            
+            if (missingVersions.length > 0) {
+                throw new Error(`Versions not installed: ${missingVersions.join(', ')}`);
+            }
+
+            // Setup directory structure
+            const sourcePath = path.dirname(path.dirname(__dirname));
+            const targetPaths = {
+                root: targetPath,
                 minecraft: path.join(targetPath, 'minecraft'),
-                java: path.join(targetPath, 'java'),
-                launcher: path.join(targetPath, 'launcher'),
-                config: path.join(targetPath, 'config')
+                launcher: path.join(targetPath, 'launcher')
             };
 
             // Create directories
-            for (const dir of Object.values(paths)) {
-                await fs.ensureDir(dir);
-                logger.info(`Created directory: ${dir}`);
-            }
+            await fs.ensureDir(targetPaths.minecraft);
+            await fs.ensureDir(targetPaths.launcher);
 
-            currentStep++;
-            this.updateProgress('Setup', (currentStep / totalSteps) * 100, 'Directories created');
-
-            // Create minecraft installer instance
-            const installer = new MinecraftInstaller();
-            installer.baseDir = paths.minecraft; // Override base directory
-
-            // Install versions one by one
-            for (const version of versions) {
-                this.updateProgress('Installing', ((++currentStep) / totalSteps) * 100, `Installing ${version}`);
-                logger.info(`Starting installation of version ${version}`);
-                await this.installVersion(version, targetPath, installer);
-                logger.info(`Installed version ${version}`);
-            }
-
-            // Copy Java runtime
-            this.updateProgress('Copying Java', ((++currentStep) / totalSteps) * 100, 'Copying Java runtime');
-            logger.info('Copying Java runtime...');
-            await this.copyWithProgress(
-                path.dirname(path.dirname(javaPath)),
-                paths.java,
-                'Copying Java files'
-            );
-
-            // Copy launcher files
-            this.updateProgress('Copying Launcher', ((++currentStep) / totalSteps) * 100, 'Copying launcher files');
-            logger.info('Copying launcher files...');
-            const launcherFiles = [
-                'index.html', 'styles.css', 'renderer.js', 'main.js', 'preload.js',
-                'minecraft-launcher.js', 'minecraft-installer.js', 'logger.js',
-                'standalone-creator.js'
+            // Copy project files
+            logger.info('Copying project files...');
+            const filesToCopy = [
+                'package.json',
+                'package-lock.json',
+                '.env',
+                '.gitignore',
+                'README.md',
+                'LICENSE'
             ];
-            
-            for (const file of launcherFiles) {
-                await fs.copy(
-                    path.join(__dirname, file),
-                    path.join(paths.launcher, file)
-                );
-            }
 
-            // Create standalone config
-            this.updateProgress('Finalizing', 100, 'Creating configuration');
-            await fs.writeJson(
-                path.join(paths.config, 'standalone.json'),
-                {
-                    versions,
-                    javaPath: path.join('..', 'java', 'bin', 'java.exe'),
-                    isStandalone: true,
-                    minecraftPath: path.join('..', 'minecraft'),
-                    lastUsername: 'Player'
-                },
-                { spaces: 2 }
-            );
-
-            // Test all versions
-            logger.info('Testing installed versions...');
-            for (const version of versions) {
-                const testResult = await this.testVersion(version, targetPath, javaPath);
-                if (!testResult) {
-                    logger.warn(`Version ${version} test failed - it may not work properly`);
+            for (const file of filesToCopy) {
+                const sourcefile = path.join(sourcePath, file);
+                if (await fs.pathExists(sourcefile)) {
+                    await fs.copy(sourcefile, path.join(targetPaths.launcher, file));
                 }
             }
 
+            // Copy source code
+            await fs.copy(
+                path.join(sourcePath, 'src'),
+                path.join(targetPaths.launcher, 'src'),
+                {
+                    filter: (src) => !src.includes('node_modules')
+                }
+            );
+
+            // Copy Minecraft files
+            const foldersToSync = ['versions', 'assets', 'libraries'];
+            
+            for (const folder of foldersToSync) {
+                const sourceFolder = path.join(this.launcherPath, folder);
+                const targetFolder = path.join(targetPaths.minecraft, folder);
+                
+                if (!await fs.pathExists(sourceFolder)) {
+                    logger.warn(`Source folder not found: ${sourceFolder}`);
+                    continue;
+                }
+
+                if (folder === 'versions') {
+                    // Only copy selected versions
+                    for (const version of versions) {
+                        const versionSrc = path.join(sourceFolder, version);
+                        const versionDest = path.join(targetFolder, version);
+                        if (await fs.pathExists(versionSrc)) {
+                            await fs.copy(versionSrc, versionDest);
+                        } else {
+                            logger.warn(`Version folder not found: ${versionSrc}`);
+                        }
+                    }
+                } else {
+                    // Copy entire folder for assets and libraries
+                    await fs.copy(sourceFolder, targetFolder);
+                }
+            }
+
+            // Create standalone config
+            const config = {
+                versions,
+                isStandalone: true,
+                minecraftPath: path.join('..', 'minecraft'),
+                lastUsername: 'Player',
+                offlineMode: true,
+                launcherPath: this.launcherPath
+            };
+
+            await fs.writeJson(
+                path.join(targetPaths.launcher, 'standalone.json'),
+                config,
+                { spaces: 2 }
+            );
+
             // Create launch scripts
-            const scriptContent = process.platform === 'win32' 
-                ? '@echo off\ncd launcher\nstart "" electron .'
-                : '#!/bin/bash\ncd launcher\nelectron .';
+            const scriptContent = process.platform === 'win32'
+                ? '@echo off\ncd "%~dp0\\launcher"\nnpm install --omit=dev\nelectron . --minecraft-folder="../minecraft"'
+                : '#!/bin/bash\ncd "$(dirname "$0")/launcher"\nnpm install --omit=dev\nelectron . --minecraft-folder="../minecraft"';
 
             await fs.writeFile(
                 path.join(targetPath, process.platform === 'win32' ? 'launch.bat' : 'launch.sh'),
                 scriptContent
             );
 
+            if (process.platform !== 'win32') {
+                await fs.chmod(path.join(targetPath, 'launch.sh'), '755');
+            }
+
             logger.info('Standalone creation completed successfully');
             return true;
 
         } catch (error) {
-            logger.error(`Standalone creation failed: ${error.message}`);
+            logger.error(`Standalone creation failed: ${error}`);
             throw error;
         }
+    }
+
+    async setupNodeJS() {
+        try {
+            // Check if Node.js is installed
+            await this.executeCommand('node --version');
+            logger.info('Node.js is already installed');
+        } catch {
+            logger.info('Installing Node.js...');
+            if (process.platform === 'win32') {
+                // Try winget first
+                try {
+                    await this.executeCommand('winget install OpenJS.NodeJS.LTS');
+                } catch {
+                    throw new Error('Please install Node.js from https://nodejs.org/');
+                }
+            } else {
+                throw new Error('Please install Node.js from https://nodejs.org/');
+            }
+        }
+    }
+
+    async executeCommand(command, options = {}) {
+        return new Promise((resolve, reject) => {
+            const proc = require('child_process').exec(command, options, (error, stdout, stderr) => {
+                if (error) reject(error);
+                else resolve(stdout);
+            });
+            proc.stdout?.pipe(process.stdout);
+            proc.stderr?.pipe(process.stderr);
+        });
     }
 }
 

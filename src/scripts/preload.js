@@ -85,6 +85,11 @@ contextBridge.exposeInMainWorld('minecraft', {
                 ipcRenderer.on('server-log', (_, data) => callback(data));
             }
         }
+    },
+    onInstallProgress: (callback) => {
+        if (typeof callback === 'function') {
+            ipcRenderer.on('install-progress', (_, data) => callback(data));
+        }
     }
 });
 

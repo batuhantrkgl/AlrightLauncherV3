@@ -12,6 +12,11 @@ class MinecraftInstaller {
         this.assetsDir = path.join(this.baseDir, 'assets');
         this.librariesDir = path.join(this.baseDir, 'libraries');
         this.createDirectories();
+        this.mainWindow = require('electron').BrowserWindow.getAllWindows()[0];
+        this.downloadQueue = [];
+        this.isDownloading = false;
+        this.downloadDelay = 100; // 500ms delay between downloads
+        this.downloadChunkSize = 64 * 1024; // 64KB chunks
     }
 
     createDirectories() {
@@ -22,38 +27,116 @@ class MinecraftInstaller {
         });
     }
 
-    async downloadFile(url, destination) {
-        const response = await fetch(url);
-        if (!response.ok) {
-            throw new Error(`Failed to download: ${response.statusText}`);
-        }
-        const totalSize = parseInt(response.headers.get('content-length'), 10);
-        let downloadedSize = 0;
-
-        const progressBar = new cliProgress.SingleBar({
-            format: 'Downloading |{bar}| {percentage}% | {value}/{total} bytes',
-            barCompleteChar: '\u2588',
-            barIncompleteChar: '\u2591'
+    async sendProgress(percent, phase, detail) {
+        this.mainWindow.webContents.send('install-progress', {
+            percent,
+            phase,
+            detail
         });
-        
-        progressBar.start(totalSize, 0);
+    }
 
-        const fileStream = fs.createWriteStream(destination);
+    async downloadFile(url, destination, description, maxRetries = 3) {
+        // Queue the download and wait for completion
         return new Promise((resolve, reject) => {
-            response.body.on('data', (chunk) => {
-                downloadedSize += chunk.length;
-                progressBar.update(downloadedSize);
+            this.downloadQueue.push({
+                url,
+                destination,
+                description,
+                maxRetries,
+                resolve,
+                reject
             });
-            response.body.pipe(fileStream);
-            response.body.on('error', (error) => {
-                progressBar.stop();
-                reject(error);
-            });
-            fileStream.on('finish', () => {
-                progressBar.stop();
-                resolve();
-            });
+            
+            if (!this.isDownloading) {
+                this.processDownloadQueue();
+            }
         });
+    }
+
+    async processDownloadQueue() {
+        if (this.isDownloading || this.downloadQueue.length === 0) return;
+        
+        this.isDownloading = true;
+        const download = this.downloadQueue.shift();
+
+        for (let attempt = 1; attempt <= download.maxRetries; attempt++) {
+            try {
+                const response = await fetch(download.url);
+                if (!response.ok) throw new Error(`Failed to download: ${response.statusText}`);
+                
+                const totalSize = parseInt(response.headers.get('content-length'), 10);
+                let downloadedSize = 0;
+
+                // Ensure the directory exists and is writable
+                await fs.ensureDir(path.dirname(download.destination), { mode: 0o755 });
+                
+                // Create write stream with explicit permissions
+                const fileStream = fs.createWriteStream(download.destination, {
+                    flags: 'w',
+                    mode: 0o644
+                });
+
+                await new Promise((resolve, reject) => {
+                    response.body.on('data', chunk => {
+                        downloadedSize += chunk.length;
+                        const percent = (downloadedSize / totalSize) * 100;
+                        
+                        this.sendProgress(
+                            percent,
+                            'Downloading',
+                            `${download.description} (${(downloadedSize / 1024 / 1024).toFixed(2)}/${(totalSize / 1024 / 1024).toFixed(2)} MB)`
+                        );
+
+                        fileStream.write(chunk);
+                    });
+
+                    response.body.on('end', () => {
+                        fileStream.end();
+                    });
+
+                    response.body.on('error', reject);
+                    fileStream.on('finish', resolve);
+                    fileStream.on('error', reject);
+                });
+
+                // Verify the downloaded file
+                const stats = await fs.stat(download.destination);
+                if (stats.size === 0 || stats.size !== totalSize) {
+                    throw new Error(`File verification failed - expected ${totalSize} bytes but got ${stats.size}`);
+                }
+
+                // Set file permissions
+                await fs.chmod(download.destination, 0o644);
+
+                // Add delay between files
+                await new Promise(r => setTimeout(r, this.downloadDelay));
+                download.resolve(true);
+                break;
+
+            } catch (error) {
+                logger.error(`Download attempt ${attempt} failed for ${download.description}: ${error.message}`);
+                
+                // Clean up failed download
+                try {
+                    if (await fs.pathExists(download.destination)) {
+                        await fs.remove(download.destination);
+                    }
+                } catch (removeError) {
+                    logger.error(`Failed to remove incomplete file: ${removeError.message}`);
+                }
+
+                if (attempt === download.maxRetries) {
+                    download.reject(new Error(`Failed to download ${download.description} after ${download.maxRetries} attempts: ${error.message}`));
+                    break;
+                }
+                
+                // Exponential backoff between retries
+                await new Promise(r => setTimeout(r, attempt * 2000));
+            }
+        }
+
+        this.isDownloading = false;
+        this.processDownloadQueue();
     }
 
     async getVersionManifest() {
@@ -96,7 +179,7 @@ class MinecraftInstaller {
 
             if (!fs.existsSync(assetPath)) {
                 const assetUrl = `https://resources.download.minecraft.net/${prefix}/${hash}`;
-                await this.downloadFile(assetUrl, assetPath);
+                await this.downloadFile(assetUrl, assetPath, `Asset: ${name}`);
                 logger.info(`Downloaded asset: ${name}`);
             }
         }
@@ -104,37 +187,136 @@ class MinecraftInstaller {
 
     async downloadLibraries(versionData) {
         logger.info('Downloading libraries...');
+        const nativesDir = path.join(this.versionsDir, versionData.id, 'natives');
+        
+        // Ensure natives directory is clean
+        await fs.emptyDir(nativesDir);
+        logger.info('Cleaned natives directory');
+
+        const processedNatives = new Set(); // Track processed natives to avoid duplicates
+        
         for (const lib of versionData.libraries) {
-            if (!lib.downloads?.artifact) continue;
-
-            const libPath = path.join(this.librariesDir, lib.downloads.artifact.path);
-            fs.mkdirSync(path.dirname(libPath), { recursive: true });
-            
-            if (!fs.existsSync(libPath)) {
-                await this.downloadFile(lib.downloads.artifact.url, libPath);
-                logger.info(`Downloaded library: ${lib.name}`);
-            }
-
-            // Download natives if present
-            if (lib.natives && lib.downloads.classifiers) {
-                const nativeKey = lib.natives[process.platform === 'win32' ? 'windows' : process.platform === 'darwin' ? 'osx' : 'linux'];
-                const nativeArtifact = lib.downloads.classifiers[nativeKey];
-                
-                if (nativeArtifact) {
-                    const nativePath = path.join(this.librariesDir, nativeArtifact.path);
-                    fs.mkdirSync(path.dirname(nativePath), { recursive: true });
+            try {
+                // Download main artifact
+                if (lib.downloads?.artifact) {
+                    const libPath = path.join(this.librariesDir, lib.downloads.artifact.path);
+                    await fs.ensureDir(path.dirname(libPath));
                     
-                    if (!fs.existsSync(nativePath)) {
-                        await this.downloadFile(nativeArtifact.url, nativePath);
-                        logger.info(`Downloaded native library: ${lib.name}`);
+                    if (!fs.existsSync(libPath)) {
+                        await this.downloadFile(
+                            lib.downloads.artifact.url, 
+                            libPath,
+                            `Library: ${lib.name}`
+                        );
                     }
-
-                    // Extract native libraries to the natives folder
-                    const nativesDir = path.join(this.versionsDir, versionData.id, 'natives');
-                    await this.extractZip(nativePath, nativesDir);
-                    logger.info(`Extracted native library: ${lib.name}`);
                 }
+
+                // Enhanced natives handling
+                if (lib.natives) {
+                    const osName = this.getOSName();
+                    const nativeKey = lib.natives[osName];
+                    
+                    if (nativeKey && lib.downloads?.classifiers?.[nativeKey]) {
+                        const nativeArtifact = lib.downloads.classifiers[nativeKey];
+                        const nativeName = `${lib.name}-${nativeKey}`;
+
+                        // Skip if already processed
+                        if (processedNatives.has(nativeName)) continue;
+                        processedNatives.add(nativeName);
+
+                        const nativePath = path.join(
+                            this.librariesDir, 
+                            'natives',
+                            `${lib.name.replace(/:/g, '-')}-${nativeKey}.jar`
+                        );
+                        
+                        await fs.ensureDir(path.dirname(nativePath));
+                        
+                        // Download native library
+                        if (!fs.existsSync(nativePath)) {
+                            await this.downloadFile(
+                                nativeArtifact.url,
+                                nativePath,
+                                `Native Library: ${lib.name}`
+                            );
+                        }
+
+                        // Extract native library with special handling for LWJGL
+                        const isLWJGL = lib.name.includes('lwjgl');
+                        await this.extractNative(nativePath, nativesDir, lib.extract, isLWJGL);
+                        logger.info(`Extracted native library: ${lib.name}`);
+                    }
+                }
+            } catch (error) {
+                logger.error(`Failed to process library ${lib.name}: ${error.message}`);
             }
+        }
+
+        // Verify natives after extraction
+        await this.verifyNatives(nativesDir);
+    }
+
+    async verifyNatives(nativesDir) {
+        const requiredFiles = ['lwjgl.dll', 'lwjgl64.dll', 'OpenAL.dll', 'OpenAL64.dll'];
+        const missingFiles = [];
+
+        for (const file of requiredFiles) {
+            const filePath = path.join(nativesDir, file);
+            if (!await fs.pathExists(filePath)) {
+                missingFiles.push(file);
+            }
+        }
+
+        if (missingFiles.length > 0) {
+            logger.error(`Missing native files: ${missingFiles.join(', ')}`);
+            throw new Error(`Missing required native files: ${missingFiles.join(', ')}`);
+        }
+
+        // Set proper permissions for all native files
+        const files = await fs.readdir(nativesDir);
+        for (const file of files) {
+            await fs.chmod(path.join(nativesDir, file), 0o755);
+        }
+
+        logger.info('All native libraries verified successfully');
+    }
+
+    getOSName() {
+        switch (process.platform) {
+            case 'win32': return 'windows';
+            case 'darwin': return 'osx';
+            case 'linux': return 'linux';
+            default: return process.platform;
+        }
+    }
+
+    async extractNative(sourcePath, targetDir, extractRules, isLWJGL = false) {
+        try {
+            await extract(sourcePath, { 
+                dir: targetDir,
+                onEntry: (entry) => {
+                    // Always extract .dll files for LWJGL
+                    if (isLWJGL && entry.fileName.endsWith('.dll')) {
+                        return true;
+                    }
+                    
+                    // Follow normal extraction rules for other files
+                    if (extractRules?.exclude?.some(pattern => 
+                        entry.fileName.match(pattern)
+                    )) {
+                        return false;
+                    }
+                    return true;
+                }
+            });
+            
+            // Set proper permissions for extracted files
+            const files = await fs.readdir(targetDir);
+            for (const file of files) {
+                await fs.chmod(path.join(targetDir, file), 0o755);
+            }
+        } catch (error) {
+            throw new Error(`Native extraction failed: ${error.message}`);
         }
     }
 
@@ -148,63 +330,134 @@ class MinecraftInstaller {
         }
     }
 
+    async verifyFile(filePath, expectedHash) {
+        try {
+            if (!await fs.pathExists(filePath)) return false;
+            
+            const crypto = require('crypto');
+            const hash = crypto.createHash('sha1');
+            const fileStream = fs.createReadStream(filePath);
+            
+            await new Promise((resolve, reject) => {
+                fileStream.on('data', (data) => hash.update(data));
+                fileStream.on('end', resolve);
+                fileStream.on('error', reject);
+            });
+            
+            const fileHash = hash.digest('hex');
+            return fileHash === expectedHash;
+        } catch (error) {
+            logger.error(`File verification failed: ${error.message}`);
+            return false;
+        }
+    }
+
     async installVersion(version) {
         try {
-            logger.info(`Starting installation of Minecraft ${version}`);
+            await this.sendProgress(0, 'Starting Installation', `Preparing to install Minecraft ${version}`);
             
+            // Get version manifest
+            await this.sendProgress(5, 'Fetching Version Data', 'Getting version manifest...');
             const manifest = await this.getVersionManifest();
-            logger.info('Got version manifest');
             
             const versionInfo = manifest.versions.find(v => v.id === version);
-            if (!versionInfo) {
-                logger.error(`Version ${version} not found in manifest`);
-                throw new Error(`Version ${version} not found`);
-            }
+            if (!versionInfo) throw new Error(`Version ${version} not found`);
 
-            logger.info(`Downloading version ${version} data`);
-            const versionResponse = await fetch(versionInfo.url, {
-                headers: { 'Accept': 'application/json' }
-            });
-
-            if (!versionResponse.ok) {
-                logger.error(`Failed to fetch version data: ${versionResponse.statusText}`);
-                throw new Error(`Failed to fetch version data: ${versionResponse.statusText}`);
-            }
-
+            // Download version JSON
+            await this.sendProgress(10, 'Downloading Version JSON', `Getting ${version} metadata...`);
+            const versionResponse = await fetch(versionInfo.url);
             const versionData = await versionResponse.json();
-            logger.info(`Got version data for ${version}`);
 
+            // Create directories
             const versionDir = path.join(this.versionsDir, version);
-            if (!fs.existsSync(versionDir)) {
-                fs.mkdirSync(versionDir, { recursive: true });
-                logger.info(`Created version directory: ${versionDir}`);
+            await fs.ensureDir(versionDir);
+            await fs.ensureDir(this.librariesDir);
+            await fs.ensureDir(path.join(this.assetsDir, 'indexes'));
+            await fs.ensureDir(path.join(this.assetsDir, 'objects'));
+
+            // Download libraries
+            const totalLibraries = versionData.libraries.length;
+            for (let i = 0; i < totalLibraries; i++) {
+                const lib = versionData.libraries[i];
+                if (!lib.downloads?.artifact) continue;
+
+                const progress = 10 + (40 * (i / totalLibraries));
+                const libPath = path.join(this.librariesDir, lib.downloads.artifact.path);
+                await fs.ensureDir(path.dirname(libPath));
+
+                if (!fs.existsSync(libPath)) {
+                    await this.downloadFile(
+                        lib.downloads.artifact.url, 
+                        libPath,
+                        `Library: ${lib.name}`
+                    );
+                } else {
+                    await this.sendProgress(progress, 'Checking Libraries', `Verified: ${lib.name}`);
+                }
             }
 
-            // Download libraries first
-            await this.downloadLibraries(versionData);
-            logger.info('Libraries downloaded successfully');
-
-            // Download client jar
-            logger.info('Downloading client jar...');
+            // Download client jar only if needed
+            await this.sendProgress(50, 'Checking Game Files', 'Verifying main game file...');
             const clientJar = path.join(versionDir, `${version}.jar`);
-            await this.downloadFile(versionData.downloads.client.url, clientJar);
-            logger.info('Client jar downloaded successfully');
+            const expectedHash = versionData.downloads.client.sha1;
+            
+            if (!await this.verifyFile(clientJar, expectedHash)) {
+                await this.sendProgress(50, 'Downloading Game', 'Fetching main game file...');
+                await this.downloadFile(
+                    versionData.downloads.client.url,
+                    clientJar,
+                    'Main Game JAR'
+                );
+            } else {
+                logger.info('Client JAR verified, skipping download');
+                await this.sendProgress(50, 'Checking Game Files', 'Main game file verified');
+            }
 
             // Download assets
-            await this.downloadAssets(versionData);
-            logger.info('Assets downloaded successfully');
+            await this.sendProgress(60, 'Fetching Assets', 'Downloading game resources...');
+            const assetIndexUrl = versionData.assetIndex.url;
+            const assetIndexPath = path.join(this.assetsDir, 'indexes', `${versionData.assetIndex.id}.json`);
+            
+            await fs.ensureDir(path.join(this.assetsDir, 'indexes'));
+            await fs.ensureDir(path.join(this.assetsDir, 'objects'));
 
-            // Save version json
-            fs.writeFileSync(
+            const indexResponse = await fetch(assetIndexUrl);
+            const assetIndex = await indexResponse.json();
+
+            const assets = Object.entries(assetIndex.objects);
+            const totalAssets = assets.length;
+
+            for (let i = 0; i < totalAssets; i++) {
+                const [name, asset] = assets[i];
+                const progress = 60 + (35 * (i / totalAssets));
+                const hash = asset.hash;
+                const prefix = hash.substring(0, 2);
+                const assetPath = path.join(this.assetsDir, 'objects', prefix, hash);
+
+                if (!fs.existsSync(assetPath)) {
+                    await this.downloadFile(
+                        `https://resources.download.minecraft.net/${prefix}/${hash}`,
+                        assetPath,
+                        `Asset: ${name}`
+                    );
+                } else {
+                    await this.sendProgress(progress, 'Verifying Assets', `Checked: ${name}`);
+                }
+            }
+
+            // Save version JSON
+            await this.sendProgress(95, 'Finalizing', 'Saving version data...');
+            await fs.writeFile(
                 path.join(versionDir, `${version}.json`),
                 JSON.stringify(versionData, null, 2)
             );
 
-            logger.info(`Successfully installed Minecraft ${version}`);
+            await this.sendProgress(100, 'Complete', `Successfully installed Minecraft ${version}`);
             return true;
         } catch (error) {
-            logger.error(`Installation error: ${error.message}`);
-            return false;
+            logger.error(`Installation failed: ${error.message}`);
+            await this.sendProgress(100, 'Error', error.message);
+            throw error;
         }
     }
 }

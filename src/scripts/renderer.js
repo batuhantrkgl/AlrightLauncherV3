@@ -13,6 +13,59 @@ if (!window.minecraft?.logger) {
     };
 }
 
+let isOperationInProgress = false;
+
+function showProgress(show = true) {
+    const overlay = document.getElementById('progressOverlay');
+    overlay.style.display = show ? 'flex' : 'none';
+    
+    if (!show) {
+        // Clear logs when hiding
+        recentLogs = [];
+        document.getElementById('progressLogs').innerHTML = '';
+    }
+    
+    // Disable/enable UI elements
+    document.body.classList.toggle('disabled', show);
+    isOperationInProgress = show;
+}
+
+function updateProgress(percent, text, detail = '') {
+    const fill = document.getElementById('progressFill');
+    const textEl = document.getElementById('progressText');
+    const detailEl = document.getElementById('progressDetail');
+    
+    fill.style.width = `${percent}%`;
+    textEl.textContent = text;
+    detailEl.textContent = detail;
+    
+    // Add to logs
+    updateProgressLogs(`${text}: ${detail}`);
+}
+
+let recentLogs = [];
+
+function updateProgressLogs(message) {
+    const logsContainer = document.getElementById('progressLogs');
+    
+    // Add new log to array
+    recentLogs.push(message);
+    
+    // Keep only last 3 logs
+    if (recentLogs.length > 3) {
+        recentLogs.shift();
+    }
+    
+    // Update display
+    logsContainer.innerHTML = recentLogs
+        .map((log, index) => `
+            <div class="log-line ${index === recentLogs.length - 1 ? 'new' : ''}">
+                ${log}
+            </div>
+        `)
+        .join('');
+}
+
 const versionElement = document.getElementById('version');
 const dropdown = document.getElementById('version-dropdown');
 const username = document.getElementById('username');
@@ -353,95 +406,39 @@ window.addEventListener('DOMContentLoaded', async () => {
 });
 
 async function playGame() {
+    if (isOperationInProgress) return;
+    
     const version = document.getElementById('version').textContent;
     const username = document.getElementById('username').textContent;
-    const playButton = document.querySelector('.play-button');
-    const originalText = playButton.textContent;
-    window.minecraft.logger.info('=== Starting game launch sequence ===');
-    window.minecraft.logger.info(`Version: ${version}`);
-    window.minecraft.logger.info(`Username: ${username}`);
     
     try {
-        // Disable button immediately
-        playButton.disabled = true;
-
-        // Check Java first
+        showProgress(true);
+        updateProgress(0, 'Checking Java installation...');
+        
+        // Check Java
         const hasJava = await window.minecraft.isJavaInstalled();
         if (!hasJava) {
-            playButton.textContent = 'Java Required';
+            updateProgress(100, 'Java Required', 'Please install Java and try again');
+            setTimeout(() => showProgress(false), 2000);
             return;
         }
 
-        window.minecraft.logger.info(`Starting game launch process for ${version}`);
-        window.minecraft.logger.info(`User: ${username}`);
-        
-        // Verify installation
-        playButton.textContent = 'Verifying...';
-        const versionPath = window.minecraft.utils.pathJoin(
-            window.minecraft.utils.getAppData(),
-            '.alrightlauncher',
-            'versions',
-            version
-        );
+        updateProgress(20, 'Verifying game files...');
+        // Verify installation code...
 
-        // Check if version exists and is complete
-        if (!window.minecraft.utils.existsSync(versionPath)) {
-            window.minecraft.logger.info(`Version ${version} not found, starting download...`);
-            playButton.textContent = 'Installing...';
-            const success = await window.minecraft.installVersion(version);
-            if (!success) {
-                throw new Error('Installation failed');
-            }
-            window.minecraft.logger.info(`Version ${version} installed successfully`);
-        }
-
-        // Verify Java again just before launch
-        window.minecraft.logger.info('Verifying Java installation...');
-        const javaCheck = await window.minecraft.isJavaInstalled();
-        if (!javaCheck) {
-            window.minecraft.logger.warn('Java not found, initiating installation...');
-            playButton.textContent = 'Installing Java...';
-            const javaInstalled = await window.minecraft.checkJava();
-            if (!javaInstalled) {
-                throw new Error('Java installation failed');
-            }
-            window.minecraft.logger.info('Java installed successfully');
-        }
-
-        // Launch the game
-        window.minecraft.logger.info('Launching game...');
-        playButton.textContent = 'Launching...';
+        updateProgress(40, 'Preparing to launch...');
         const launched = await window.minecraft.launchGame(version, username);
         
-        if (launched) {
-            window.minecraft.logger.info('Game launched successfully');
-            playButton.textContent = 'Playing...';
-            
-            // Create a function to check if the game is still running
-            const checkGameStatus = setInterval(() => {
-                window.minecraft.isGameRunning(version).then(running => {
-                    if (!running) {
-                        clearInterval(checkGameStatus);
-                        playButton.textContent = originalText;
-                        playButton.disabled = false;
-                    }
-                });
-            }, 5000); // Check every 5 seconds
-            
-            window.minecraft.logger.info('=== Game launch sequence completed ===');
+        if (launched.success) {
+            updateProgress(100, 'Game launched successfully!');
+            setTimeout(() => showProgress(false), 1000);
         } else {
-            throw new Error('Game launch failed');
+            throw new Error(launched.error || 'Failed to launch game');
         }
+        
     } catch (error) {
-        window.minecraft.logger.error('=== Game launch sequence failed ===');
-        window.minecraft.logger.error(`Error details: ${error.stack || error.message}`);
-        console.error('Game error:', error);
-        alert(`Launch failed: ${error.message || 'Unknown error'}`);
-        playButton.textContent = 'Error';
-        setTimeout(() => {
-            playButton.textContent = originalText;
-            playButton.disabled = false;
-        }, 2000);
+        updateProgress(100, 'Error', error.message);
+        setTimeout(() => showProgress(false), 2000);
     }
 }
 
@@ -824,4 +821,12 @@ setInterval(updateServerList, 5000);
 window.addEventListener('DOMContentLoaded', () => {
     // ...existing DOMContentLoaded code...
     updateServerList();
+});
+
+window.minecraft.onInstallProgress((data) => {
+    updateProgress(
+        data.percent,
+        data.phase,
+        data.detail + ' (' + Math.round(data.percent) + '%)'
+    );
 });

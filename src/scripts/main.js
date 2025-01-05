@@ -22,19 +22,40 @@ function resolveAppPath(relativePath) {
     return path.join(__dirname, '..', relativePath);
 }
 
-// Add this before any file operations
+// Add this at the top level, after the existing imports
+function parseCommandLineArgs() {
+    const args = process.argv.slice(2);
+    let minecraftFolder = null;
+
+    for (const arg of args) {
+        if (arg.startsWith('--minecraft-folder=')) {
+            minecraftFolder = arg.split('=')[1];
+        } else if (arg === '--minecraft-folder' && args[args.indexOf(arg) + 1]) {
+            minecraftFolder = args[args.indexOf(arg) + 1];
+        }
+    }
+
+    return {
+        minecraftFolder: minecraftFolder ? path.resolve(minecraftFolder) : null
+    };
+}
+
+// Replace the existing ensureDirectories function
 async function ensureDirectories() {
-    const launcherDir = path.join(app.getPath('appData'), '.alrightlauncher');
-    await fs.ensureDir(launcherDir);
-    console.log('Launcher directory created/verified:', launcherDir);
+    const args = parseCommandLineArgs();
+    const minecraftDir = args.minecraftFolder || path.join(app.getPath('appData'), '.alrightlauncher');
     
-    // Also create other necessary directories
+    // Store the minecraft directory path globally
+    global.minecraftPath = minecraftDir;
+    console.log('Using Minecraft directory:', minecraftDir);
+
+    // Create necessary directories
     const directories = [
-        path.join(launcherDir, 'versions'),
-        path.join(launcherDir, 'assets'),
-        path.join(launcherDir, 'libraries'),
-        path.join(launcherDir, 'crash-reports'),
-        path.join(launcherDir, 'logs')
+        path.join(minecraftDir, 'versions'),
+        path.join(minecraftDir, 'assets'),
+        path.join(minecraftDir, 'libraries'),
+        path.join(minecraftDir, 'crash-reports'),
+        path.join(minecraftDir, 'logs')
     ];
 
     for (const dir of directories) {
@@ -153,7 +174,7 @@ function registerIpcHandlers() {
     ipcMain.handle('launch-game', async (event, { version, username }) => {
         try {
             if (!minecraftLauncher) {
-                const baseDir = path.join(app.getPath('appData'), '.alrightlauncher');
+                const baseDir = global.minecraftPath;
                 minecraftLauncher = new MinecraftLauncher(baseDir);
             }
 
@@ -167,7 +188,7 @@ function registerIpcHandlers() {
                 if (code !== 0) {
                     // Check multiple possible crash report locations
                     const crashLocations = [
-                        path.join(app.getPath('appData'), '.alrightlauncher', 'crash-reports'),
+                        path.join(global.minecraftPath, 'crash-reports'),
                         path.join(process.cwd(), 'crash-reports')
                     ];
 
@@ -240,10 +261,11 @@ function registerIpcHandlers() {
         }
     });
 
-    ipcMain.handle('create-standalone', async (event, version) => {
+    ipcMain.handle('create-standalone', async (event, { version, launcherPath }) => {
         try {
             const StandaloneCreator = require('./standalone-creator');
-            const creator = new StandaloneCreator();
+            // Use the custom minecraft path
+            const creator = new StandaloneCreator(global.minecraftPath);
             
             // Create AOS directory if it doesn't exist
             const defaultPath = path.join(process.env.USERPROFILE, 'Desktop', 'AOS');
@@ -259,27 +281,15 @@ function registerIpcHandlers() {
             });
 
             if (result.canceled) {
-                console.log('User cancelled directory selection');
                 return { success: false, reason: 'cancelled' };
             }
 
             const selectedPath = result.filePaths[0];
             console.log('Selected directory:', selectedPath);
-
-            // Initialize minecraft launcher if not exists
-            if (!minecraftLauncher) {
-                const launcherDir = path.join(app.getPath('appData'), '.alrightlauncher');
-                await fs.ensureDir(launcherDir);
-                minecraftLauncher = new MinecraftLauncher(launcherDir);
-            }
-            
-            const javaPath = minecraftLauncher.findJavaPath();
-            if (!javaPath) {
-                return { success: false, reason: 'no-java' };
-            }
+            console.log('Using launcher path:', launcherPath);
 
             // Create standalone version
-            await creator.createStandalone(selectedPath, version, javaPath);
+            await creator.createStandalone(selectedPath, [version], null); // Java path is optional in offline mode
             return { success: true };
 
         } catch (error) {
@@ -306,7 +316,7 @@ function registerIpcHandlers() {
     ipcMain.handle('create-server', async (event, options) => {
         try {
             if (!serverManager) {
-                serverManager = new ServerManager(path.join(app.getPath('appData'), '.alrightlauncher'));
+                serverManager = new ServerManager(global.minecraftPath);
                 await serverManager.initialize();
             }
             return await serverManager.createServer(options);
@@ -339,7 +349,7 @@ function registerIpcHandlers() {
     ipcMain.handle('get-servers', async () => {
         try {
             if (!serverManager) {
-                serverManager = new ServerManager(path.join(app.getPath('appData'), '.alrightlauncher'));
+                serverManager = new ServerManager(global.minecraftPath);
                 await serverManager.initialize();
             }
             return await serverManager.getServerList();
@@ -411,8 +421,8 @@ async function createWindow() {
         });
     });
 
-    // Initialize minecraft launcher
-    const baseDir = path.join(app.getPath('appData'), '.alrightlauncher');
+    // Initialize minecraft launcher with custom path
+    const baseDir = global.minecraftPath;
     minecraftLauncher = new MinecraftLauncher(baseDir);
 
     // Register IPC handlers before loading the file
@@ -483,4 +493,47 @@ process.on('uncaughtException', (error) => {
 
 process.on('unhandledRejection', (error) => {
     console.error('Unhandled promise rejection:', error);
+});
+
+async function getVersions() {
+    try {
+        const response = await fetch('https://piston-meta.mojang.com/mc/game/version_manifest_v2.json', {
+            timeout: 30000 // Increase timeout to 30 seconds
+        });
+        const data = await response.json();
+        return data.versions;
+    } catch (error) {
+        logger.warn(`Failed to fetch versions online: ${error}`);
+        
+        // Fallback to installed versions
+        try {
+            const standaloneCreator = new (require('./standalone-creator'))();
+            const installedVersions = await standaloneCreator.getInstalledVersions();
+            
+            if (installedVersions.length > 0) {
+                logger.info(`Using offline version list: ${installedVersions.join(', ')}`);
+                return installedVersions.map(version => ({
+                    id: version,
+                    type: 'release', // Assume release type for offline versions
+                    url: null,
+                    time: new Date().toISOString(),
+                    releaseTime: new Date().toISOString()
+                }));
+            }
+        } catch (fallbackError) {
+            logger.error(`Fallback version detection failed: ${fallbackError}`);
+        }
+        
+        throw new Error('Could not fetch versions and no installed versions found');
+    }
+}
+
+// Replace the existing version fetching code with:
+ipcMain.handle('fetch-versions', async () => {
+    try {
+        return await getVersions();
+    } catch (error) {
+        logger.error(`Error fetching versions: ${error}`);
+        throw error;
+    }
 });

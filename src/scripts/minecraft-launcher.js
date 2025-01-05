@@ -147,12 +147,15 @@ class MinecraftLauncher {
 
     async launch(version, username, isTest = false) {
         try {
+            const gamePath = this.baseDir;
+            const versionPath = path.join(gamePath, 'versions', version);
+            
             // Create necessary directories using fs-extra
             const gameDir = path.join(this.baseDir);
             const crashReportsDir = path.join(gameDir, 'crash-reports');
             await fs.ensureDir(crashReportsDir);
 
-            console.log(`Launching Minecraft ${version} for user ${username}`);
+            logger.info(`Launching Minecraft ${version} for user ${username}`);
             const installer = new MinecraftInstaller();
             await installer.installVersion(version);
 
@@ -162,52 +165,33 @@ class MinecraftLauncher {
             }
 
             const versionDir = path.join(this.baseDir, 'versions', version);
-            const versionJson = require(path.join(versionDir, `${version}.json`));
+            const versionJsonPath = path.join(versionDir, `${version}.json`);
+            
+            // Verify version json exists
+            if (!await fs.pathExists(versionJsonPath)) {
+                throw new Error(`Version ${version} is not installed properly`);
+            }
+
+            const versionJson = require(versionJsonPath);
             const nativesDir = path.join(versionDir, 'natives');
 
-            // Ensure natives directory exists
-            await fs.ensureDir(nativesDir); // Use fs-extra's ensureDir
+            // Ensure natives directory exists and is empty
+            await fs.emptyDir(nativesDir);
+
+            // Verify client jar exists
+            const clientJar = path.join(versionDir, `${version}.jar`);
+            if (!await fs.pathExists(clientJar)) {
+                throw new Error('Game files are missing or corrupted');
+            }
 
             const classpath = this.getLibrariesClasspath(version);
             const mainClass = versionJson.mainClass;
 
-            const playerUUID = this.generateUUID();
-            const accessToken = playerUUID.replace(/-/g, '');
-
-            // Create launcher_profiles.json with offline mode settings
-            await fs.writeFile(
-                path.join(this.baseDir, 'launcher_profiles.json'),
-                JSON.stringify({
-                    authenticationDatabase: {
-                        [playerUUID]: {
-                            accessToken: accessToken,
-                            username: username,
-                            properties: [],
-                            type: "msa"
-                        }
-                    },
-                    clientToken: this.generateUUID(),
-                    launcherVersion: {
-                        format: 21,
-                        name: "AlrightLauncher",
-                        profiles: {
-                            [playerUUID]: {
-                                created: new Date().toISOString(),
-                                icon: "Grass",
-                                lastUsed: new Date().toISOString(),
-                                name: username,
-                                type: "latest-release",
-                                lastVersionId: version
-                            }
-                        },
-                        selectedProfile: playerUUID
-                    }
-                }, null, 2)
-            );
+            const javaPath = this.findJavaPath();
+            const maxMemory = process.env.MAX_MEMORY || '2G';
 
             const args = [
-                // JVM Arguments
-                '-Xmx2G',
+                `-Xmx${maxMemory}`,
                 '-XX:+UnlockExperimentalVMOptions',
                 '-XX:+UseG1GC',
                 '-XX:G1NewSizePercent=20',
@@ -215,71 +199,58 @@ class MinecraftLauncher {
                 '-XX:MaxGCPauseMillis=50',
                 '-XX:G1HeapRegionSize=32M',
                 `-Djava.library.path=${nativesDir}`,
-                // Add custom authentication server properties
-                '-Dminecraft.api.auth.host=http://127.0.0.1:25566',
-                '-Dminecraft.api.account.host=http://127.0.0.1:25566',
-                '-Dminecraft.api.session.host=http://127.0.0.1:25566',
-                '-Dminecraft.api.services.host=http://127.0.0.1:25566',
-                '-Dauthlibinjector.yggdrasil.host=http://127.0.0.1:25566',
                 '-Dminecraft.launcher.brand=alright-launcher',
                 '-Dminecraft.launcher.version=3.0',
-                
-                // Class path
                 '-cp',
                 classpath,
-                
-                // Main class
                 mainClass,
-                
-                // Game arguments
                 '--username', username,
                 '--version', version,
                 '--gameDir', this.baseDir,
                 '--assetsDir', path.join(this.baseDir, 'assets'),
                 '--assetIndex', versionJson.assetIndex.id,
-                '--uuid', playerUUID,
-                '--accessToken', accessToken,
+                '--uuid', this.generateUUID(),
+                '--accessToken', 'null',
                 '--clientId', '',
                 '--xuid', this.generateXUID(),
                 '--userType', 'msa',
                 '--versionType', 'release'
             ];
 
-            // Save UUID for future use
-            await fs.writeFile(
-                path.join(this.baseDir, 'player.json'),
-                JSON.stringify({
-                    username,
-                    uuid: playerUUID,
-                    uuidInts: this.uuidToIntArray(playerUUID)
-                }, null, 2)
-            );
-
-            const javaPath = this.findJavaPath();
-            logger.info(`Launching Minecraft with command: ${javaPath} ${args.join(' ')}`);
+            // Log the complete command for debugging
+            logger.info(`Launch command: ${javaPath} ${args.join(' ')}`);
 
             const minecraft = spawn(javaPath, args, {
                 cwd: this.baseDir,
-                stdio: isTest ? 'ignore' : 'inherit',
+                stdio: ['pipe', 'pipe', 'pipe'],
                 detached: !isTest
             });
 
-            // Store the process ID and version
+            // Capture output for debugging
+            minecraft.stdout.on('data', (data) => {
+                logger.info(`Game output: ${data}`);
+            });
+
+            minecraft.stderr.on('data', (data) => {
+                logger.error(`Game error: ${data}`);
+            });
+
+            // Monitor process
             const pid = minecraft.pid;
             this.runningProcesses.set(version, pid);
 
-            // Monitor process termination
-            minecraft.on('exit', () => {
+            minecraft.on('exit', (code, signal) => {
                 this.runningProcesses.delete(version);
+                logger.info(`Game process exited with code ${code} and signal ${signal}`);
             });
 
             if (!isTest) {
                 minecraft.unref();
             }
 
-            return isTest ? minecraft : { pid, process: minecraft };
+            return { success: true, pid, process: minecraft };
         } catch (error) {
-            console.error('Launch error:', error);
+            logger.error(`Launch error: ${error.stack}`);
             throw error;
         }
     }
