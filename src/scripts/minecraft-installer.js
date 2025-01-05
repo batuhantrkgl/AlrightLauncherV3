@@ -185,75 +185,156 @@ class MinecraftInstaller {
         }
     }
 
+    isLibraryCompatible(library) {
+        if (!library.rules) return true;
+        
+        let compatible = false;
+        for (const rule of library.rules) {
+            if (rule.os) {
+                const osName = process.platform === 'win32' ? 'windows' : process.platform;
+                if (rule.os.name === osName) {
+                    compatible = rule.action === 'allow';
+                }
+            } else {
+                compatible = rule.action === 'allow';
+            }
+        }
+        return compatible;
+    }
+
+    async verifyAndGetNativePath(lib, nativeKey) {
+        if (!lib.downloads?.classifiers?.[nativeKey]) return null;
+        
+        const nativeArtifact = lib.downloads.classifiers[nativeKey];
+        const nativePath = path.join(this.librariesDir, nativeArtifact.path);
+        
+        // Check if file exists and matches SHA1
+        if (await fs.pathExists(nativePath)) {
+            const isValid = await this.verifyFile(nativePath, nativeArtifact.sha1);
+            if (isValid) {
+                return nativePath;
+            }
+            // If SHA1 doesn't match, delete the file
+            await fs.remove(nativePath);
+        }
+        
+        // Download if missing or invalid
+        await fs.ensureDir(path.dirname(nativePath));
+        await this.downloadFile(
+            nativeArtifact.url,
+            nativePath,
+            `Native: ${lib.name}`
+        );
+        
+        return nativePath;
+    }
+
     async downloadLibraries(versionData) {
         logger.info('Downloading libraries...');
         const nativesDir = path.join(this.versionsDir, versionData.id, 'natives');
-        
-        // Ensure natives directory is clean
+        await fs.ensureDir(nativesDir);
         await fs.emptyDir(nativesDir);
-        logger.info('Cleaned natives directory');
 
-        const processedNatives = new Set(); // Track processed natives to avoid duplicates
-        
+        // Updated natives list to match 1.16.5's structure
+        const requiredNatives = [
+            'lwjgl.dll',
+            'lwjgl32.dll',
+            'lwjgl64.dll',
+            'lwjgl_opengl.dll',
+            'lwjgl_opengl32.dll',
+            'lwjgl_stb.dll',
+            'lwjgl_stb32.dll',
+            'lwjgl_tinyfd.dll',
+            'lwjgl_tinyfd32.dll',
+            'OpenAL.dll',
+            'OpenAL32.dll',
+            'glfw.dll',
+            'glfw32.dll',
+            'jemalloc.dll',
+            'jemalloc32.dll'
+        ];
+
+        const extractedNatives = new Map();
+        const processedNatives = new Set(); // Add this line to define processedNatives
+
         for (const lib of versionData.libraries) {
-            try {
-                // Download main artifact
-                if (lib.downloads?.artifact) {
-                    const libPath = path.join(this.librariesDir, lib.downloads.artifact.path);
-                    await fs.ensureDir(path.dirname(libPath));
-                    
-                    if (!fs.existsSync(libPath)) {
-                        await this.downloadFile(
-                            lib.downloads.artifact.url, 
-                            libPath,
-                            `Library: ${lib.name}`
-                        );
-                    }
-                }
+            if (!this.isLibraryCompatible(lib)) continue;
 
-                // Enhanced natives handling
-                if (lib.natives) {
-                    const osName = this.getOSName();
-                    const nativeKey = lib.natives[osName];
-                    
-                    if (nativeKey && lib.downloads?.classifiers?.[nativeKey]) {
-                        const nativeArtifact = lib.downloads.classifiers[nativeKey];
-                        const nativeName = `${lib.name}-${nativeKey}`;
+            if (lib.natives) {
+                const nativeKey = lib.natives.windows?.replace('${arch}', '64') || 
+                                lib.natives['windows'];
+                
+                if (!nativeKey) continue;
 
-                        // Skip if already processed
-                        if (processedNatives.has(nativeName)) continue;
-                        processedNatives.add(nativeName);
+                const nativeId = `${lib.name}-${nativeKey}`;
+                if (processedNatives.has(nativeId)) continue;
+                processedNatives.add(nativeId);
 
-                        const nativePath = path.join(
-                            this.librariesDir, 
-                            'natives',
-                            `${lib.name.replace(/:/g, '-')}-${nativeKey}.jar`
-                        );
-                        
-                        await fs.ensureDir(path.dirname(nativePath));
-                        
-                        // Download native library
-                        if (!fs.existsSync(nativePath)) {
-                            await this.downloadFile(
-                                nativeArtifact.url,
-                                nativePath,
-                                `Native Library: ${lib.name}`
+                const nativePath = await this.verifyAndGetNativePath(lib, nativeKey);
+                if (!nativePath) continue;
+
+                // Extract and verify natives
+                try {
+                    await extract(nativePath, {
+                        dir: nativesDir,
+                        onEntry: (entry) => {
+                            // Updated extraction logic
+                            const isValidNative = (
+                                entry.fileName.endsWith('.dll') && 
+                                !entry.fileName.includes('META-INF/') &&
+                                (
+                                    requiredNatives.some(name => 
+                                        entry.fileName.toLowerCase() === name.toLowerCase()
+                                    ) ||
+                                    entry.fileName.includes('SAPIWrapper')  // Include SAPI wrappers
+                                )
                             );
-                        }
+                            
+                            if (isValidNative) {
+                                logger.info(`Extracting verified native: ${entry.fileName}`);
+                                extractedNatives.set(entry.fileName.toLowerCase(), entry);
+                                return true;
+                            }
 
-                        // Extract native library with special handling for LWJGL
-                        const isLWJGL = lib.name.includes('lwjgl');
-                        await this.extractNative(nativePath, nativesDir, lib.extract, isLWJGL);
-                        logger.info(`Extracted native library: ${lib.name}`);
-                    }
+                            // Also extract .git and .sha1 files for completeness
+                            if (entry.fileName.endsWith('.git') || entry.fileName.endsWith('.sha1')) {
+                                return true;
+                            }
+
+                            return false;
+                        }
+                    });
+                } catch (err) {
+                    logger.error(`Failed to extract native ${nativePath}: ${err.message}`);
                 }
-            } catch (error) {
-                logger.error(`Failed to process library ${lib.name}: ${error.message}`);
             }
         }
 
-        // Verify natives after extraction
-        await this.verifyNatives(nativesDir);
+        // Verify essential natives were extracted
+        const essentialNatives = [
+            'lwjgl.dll',
+            'OpenAL.dll',
+            'OpenAL32.dll'
+        ];
+
+        const missingEssentials = essentialNatives.filter(native => 
+            !extractedNatives.has(native.toLowerCase()) &&
+            !extractedNatives.has(native.replace('.dll', '32.dll').toLowerCase()) &&
+            !extractedNatives.has(native.replace('.dll', '64.dll').toLowerCase())
+        );
+
+        if (missingEssentials.length > 0) {
+            logger.error(`Missing essential natives: ${missingEssentials.join(', ')}`);
+            throw new Error(`Missing essential natives: ${missingEssentials.join(', ')}`);
+        }
+
+        // Set permissions for extracted files
+        for (const file of await fs.readdir(nativesDir)) {
+            await fs.chmod(path.join(nativesDir, file), 0o755);
+        }
+
+        logger.info(`Successfully extracted natives: ${[...extractedNatives.keys()].join(', ')}`);
+        return true;
     }
 
     async verifyNatives(nativesDir) {
@@ -451,6 +532,10 @@ class MinecraftInstaller {
                 path.join(versionDir, `${version}.json`),
                 JSON.stringify(versionData, null, 2)
             );
+
+            // Download and extract natives
+            await this.sendProgress(97, 'Downloading Natives', 'Downloading and extracting native libraries...');
+            await this.downloadLibraries(versionData);
 
             await this.sendProgress(100, 'Complete', `Successfully installed Minecraft ${version}`);
             return true;

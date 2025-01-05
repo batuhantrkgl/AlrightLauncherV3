@@ -1,4 +1,4 @@
-const fs = require('fs');
+const fs = require('fs-extra'); // Use fs-extra for consistency
 const path = require('path');
 
 class Logger {
@@ -59,6 +59,9 @@ class Logger {
     clear() {
         this.logs = [];
         this.notifyListeners({ type: 'clear' });
+        fs.writeFile(this.logFile, '', err => {
+            if (err) console.error('Failed to clear log file:', err);
+        });
     }
 
     getLogs() {
