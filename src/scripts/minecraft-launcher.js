@@ -36,15 +36,20 @@ class MinecraftLauncher {
         logger.info(`MinecraftLauncher initialized with base directory: ${this.baseDir}`);
     }
 
-    getRequiredJavaVersion(minecraftVersion) {
-        // Convert version string to number for comparison
-        const versionNum = parseFloat(minecraftVersion);
+    getRequiredJavaVersion(versionJson) {
+        // First check if version JSON specifies Java version
+        if (versionJson.javaVersion) {
+            if (versionJson.javaVersion.component === 'jre-legacy' || 
+                versionJson.javaVersion.majorVersion === 8) {
+                return 'legacy';
+            }
+        }
+
+        // Fallback to version number check
+        const versionNum = parseFloat(versionJson.id);
         
-        // Updated version checks:
-        if (versionNum <= 1.12) {
-            return 'legacy'; // Java 8 required for versions 1.12 and older
-        } else if (versionNum <= 1.16) {
-            return 'legacy'; // Java 8 still good for 1.13 - 1.16
+        if (versionNum <= 1.16) {
+            return 'legacy'; // Java 8 required for versions 1.16 and older
         }
         return 'modern'; // Java 17+ for versions 1.17 and newer
     }
@@ -481,7 +486,7 @@ class MinecraftLauncher {
             const classpath = this.getLibrariesClasspath(version);
             const mainClass = versionJson.mainClass;
 
-            const requiredJavaVersion = this.getRequiredJavaVersion(version);
+            const requiredJavaVersion = this.getRequiredJavaVersion(versionJson);
             logger.info(`Required Java version for Minecraft ${version}: ${requiredJavaVersion}`);
             
             // Ensure we get the correct Java version
@@ -506,12 +511,98 @@ class MinecraftLauncher {
                 await this.extractLegacyNatives(version, versionJson, nativesDir);
             }
 
-            // Updated legacy version detection for 1.16.5
-            const isLegacy = parseFloat(version) < 1.13;
-            const gameArgs = [];
+            const versionNum = parseFloat(version);
+            const isVeryOld = versionNum <= 1.6; // Versions 1.6 and below need special handling
+            const isLegacy = requiredJavaVersion === 'legacy';
 
-            // Handle game arguments based on version
-            if (versionJson.arguments?.game) {
+            // Modified command generation for very old versions
+            if (isVeryOld) {
+                const args = [
+                    `-Xmx${maxMemory}`,
+                    '-XX:+UnlockExperimentalVMOptions',
+                    '-XX:+UseG1GC',
+                    '-XX:G1NewSizePercent=20',
+                    '-XX:G1ReservePercent=20',
+                    '-XX:MaxGCPauseMillis=50',
+                    '-XX:G1HeapRegionSize=32M',
+                    `-Djava.library.path=${nativesDir}`,
+                    `-Dorg.lwjgl.librarypath=${nativesDir}`,
+                    `-Dnet.java.games.input.librarypath=${nativesDir}`,
+                    '-Dorg.lwjgl.opengl.Display.allowSoftwareOpenGL=true', // Add compatibility flag
+                    '-Dminecraft.launcher.brand=alright-launcher',
+                    '-Dminecraft.launcher.version=3.0',
+                    '-cp',
+                    classpath
+                ];
+
+                if (versionNum <= 1.5) {
+                    // For versions 1.5 and below
+                    args.push(
+                        'net.minecraft.client.Minecraft', // Direct main class for very old versions
+                        username // Old versions just take username directly
+                    );
+                } else {
+                    // For version 1.6.x
+                    const gameArgs = versionJson.minecraftArguments
+                        .replace('${auth_player_name}', username)
+                        .replace('${auth_session}', '0') // Old versions used session instead of access token
+                        .replace('${version_name}', version)
+                        .replace('${game_directory}', this.baseDir)
+                        .replace('${game_assets}', path.join(this.baseDir, 'assets'))
+                        .split(' ');
+
+                    args.push(mainClass, ...gameArgs);
+                }
+
+                logger.info(`Launch command for legacy version: ${javaPath} ${args.join(' ')}`);
+                
+                const minecraft = spawn(javaPath, args, {
+                    cwd: this.baseDir,
+                    stdio: ['pipe', 'pipe', 'pipe'],
+                    detached: !isTest
+                });
+
+                // Capture output for debugging
+                minecraft.stdout.on('data', (data) => {
+                    logger.info(`Game output: ${data}`);
+                });
+
+                minecraft.stderr.on('data', (data) => {
+                    logger.error(`Game error: ${data}`);
+                });
+
+                // Monitor process
+                const pid = minecraft.pid;
+                this.runningProcesses.set(version, pid);
+
+                minecraft.on('exit', (code, signal) => {
+                    this.runningProcesses.delete(version);
+                    logger.info(`Game process exited with code ${code} and signal ${signal}`);
+                });
+
+                if (!isTest) {
+                    minecraft.unref();
+                }
+
+                return { success: true, pid, process: minecraft };
+            }
+
+            const gameArgs = []; // Define gameArgs array at the start
+
+            // Handle very old versions (1.6.x and below)
+            if (isVeryOld) {
+                // Replace ${game_assets} with ${assets_root} for old versions
+                const args = versionJson.minecraftArguments
+                    .replace('${auth_player_name}', username)
+                    .replace('${auth_session}', '0') // Old versions used session instead of access token
+                    .replace('${version_name}', version)
+                    .replace('${game_directory}', this.baseDir)
+                    .replace('${game_assets}', path.join(this.baseDir, 'assets'))
+                    .split(' ');
+                gameArgs.push(...args);
+
+                // Continue with rest of launch code...
+            } else if (versionJson.arguments?.game) {
                 // Modern versions (1.13+)
                 const processedArgs = new Set(); // Track which arguments we've already added
                 
@@ -599,6 +690,13 @@ class MinecraftLauncher {
                 mainClass,
                 ...gameArgs
             ];
+
+            // Add legacy version detection
+            if (isLegacy && versionJson.mainClass === 'net.minecraft.launchwrapper.Launch') {
+                // Add launcher specific arguments for legacy versions
+                args.unshift('-Dlegacy.launcher=true');
+                args.unshift('-Djava.system.class.loader=net.minecraft.launchwrapper.Launch');
+            }
 
             // Log the complete command for debugging
             logger.info(`Launch command: ${javaPath} ${args.join(' ')}`);

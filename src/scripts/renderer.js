@@ -415,10 +415,24 @@ async function playGame() {
         showProgress(true);
         updateProgress(0, 'Checking Java installation...');
         
-        // Check Java
-        const hasJava = await window.minecraft.isJavaInstalled();
-        if (!hasJava) {
-            updateProgress(100, 'Java Required', 'Please install Java and try again');
+        // Get version manifest first
+        const versions = await window.minecraft.getVersions();
+        const versionInfo = versions.find(v => v.id === version);
+        
+        if (!versionInfo) {
+            throw new Error('Version information not found');
+        }
+
+        // Check if version needs legacy Java
+        const needsLegacyJava = parseFloat(version) <= 1.16;
+        const javaVersion = await window.minecraft.checkJava();
+        
+        if (!javaVersion.installed) {
+            if (needsLegacyJava) {
+                updateProgress(100, 'Java 8 Required', 'This version requires Java 8');
+            } else {
+                updateProgress(100, 'Java Required', 'Please install Java 17 or newer');
+            }
             setTimeout(() => showProgress(false), 2000);
             return;
         }
