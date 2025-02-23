@@ -494,6 +494,116 @@ class MinecraftLauncher {
         return true;
     }
 
+    isVersion119OrNewer(version) {
+        const majorVersion = parseFloat(version);
+        return majorVersion >= 1.19;
+    }
+
+    async extractModernNatives(version, versionJson, nativesDir) {
+        logger.info(`Setting up modern natives for ${version} in ${nativesDir}...`);
+        
+        try {
+            // Ensure natives directory exists and is empty
+            await fs.ensureDir(nativesDir);
+            await fs.emptyDir(nativesDir);
+
+            // Track extracted natives to avoid duplicates
+            const extractedFiles = new Set();
+            const nativesMap = new Map();
+
+            for (const lib of versionJson.libraries) {
+                if (!this.isLibraryCompatible(lib)) continue;
+
+                // Get native keys for Windows
+                const possibleNativeKeys = [
+                    'natives-windows',
+                    'natives-windows-64',
+                    lib.natives?.windows?.replace('${arch}', '64')
+                ].filter(Boolean);
+
+                for (const nativeKey of possibleNativeKeys) {
+                    let nativePath = null;
+                    let nativeData = null;
+
+                    // Try both download formats
+                    if (lib.downloads?.classifiers?.[nativeKey]) {
+                        nativeData = lib.downloads.classifiers[nativeKey];
+                        nativePath = path.join(this.librariesDir, nativeData.path);
+                    } else if (lib.name) {
+                        // Fallback to constructing path from name
+                        const [group, artifact, version] = lib.name.split(':');
+                        const nativeSuffix = nativeKey.replace('${arch}', '64');
+                        nativePath = path.join(
+                            this.librariesDir,
+                            group.replace(/\./g, '/'),
+                            artifact,
+                            version,
+                            `${artifact}-${version}-${nativeSuffix}.jar`
+                        );
+                    }
+
+                    if (nativePath && fs.existsSync(nativePath)) {
+                        logger.info(`Found native: ${nativePath}`);
+                        nativesMap.set(lib.name, nativePath);
+                    }
+                }
+            }
+
+            // Extract all found natives
+            for (const [libName, nativePath] of nativesMap.entries()) {
+                logger.info(`Extracting native library: ${libName}`);
+                await extract(nativePath, {
+                    dir: nativesDir,
+                    onEntry: (entry) => {
+                        const fileName = path.basename(entry.fileName).toLowerCase();
+                        // Extract all DLL files and track them
+                        if (fileName.endsWith('.dll') && !extractedFiles.has(fileName)) {
+                            logger.info(`Extracting: ${fileName}`);
+                            extractedFiles.add(fileName);
+                            return true;
+                        }
+                        return false;
+                    }
+                });
+            }
+
+            // Log what was extracted
+            logger.info(`Extracted natives: ${Array.from(extractedFiles).join(', ')}`);
+
+            // Verify critical natives were extracted
+            const requiredPrefixes = [
+                'lwjgl',
+                'glfw',
+                'openal',
+                'jemalloc'
+            ];
+
+            const missingNatives = requiredPrefixes.filter(prefix => 
+                !Array.from(extractedFiles).some(file => 
+                    file.toLowerCase().startsWith(prefix.toLowerCase())
+                )
+            );
+
+            if (missingNatives.length > 0) {
+                throw new Error(`Missing required natives: ${missingNatives.join(', ')}`);
+            }
+
+            // Set proper permissions
+            const files = await fs.readdir(nativesDir);
+            for (const file of files) {
+                await fs.chmod(path.join(nativesDir, file), 0o755);
+                logger.info(`Set permissions for ${file}`);
+            }
+
+            logger.info(`Successfully extracted ${files.length} native files for modern Minecraft`);
+            return true;
+
+        } catch (error) {
+            logger.error(`Failed to extract modern natives: ${error.stack}`);
+            throw error;
+        }
+    }
+
     async launch(version, username, isTest = false) {
         try {
             const versionDir = path.join(this.baseDir, 'versions', version);
@@ -599,6 +709,13 @@ class MinecraftLauncher {
                     );
                     args.push(...gameArgs);
                 }
+            }
+
+            // Determine native extraction method based on version
+            if (this.isVersion119OrNewer(version)) {
+                await this.extractModernNatives(version, versionJson, argMap.natives_directory);
+            } else {
+                await this.extractLegacyNatives(version, versionJson, argMap.natives_directory);
             }
 
             logger.info(`Launch command: ${javaPath} ${args.join(' ')}`);
