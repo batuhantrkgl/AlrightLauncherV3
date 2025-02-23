@@ -395,35 +395,87 @@ class MinecraftLauncher {
     async extractNativesForVersion(version, versionJson, nativesDir) {
         logger.info(`Extracting natives for ${version}...`);
         await fs.ensureDir(nativesDir);
-        
-        const natives = [
-            {
-                name: 'LWJGL',
-                path: 'org/lwjgl/lwjgl/lwjgl-platform/2.9.4-nightly-20150209/lwjgl-platform-2.9.4-nightly-20150209-natives-windows.jar'
-            },
-            {
-                name: 'Jinput',
-                path: 'net/java/jinput/jinput-platform/2.0.5/jinput-platform-2.0.5-natives-windows.jar'
-            }
-        ];
+        await fs.emptyDir(nativesDir); // Clear existing natives
 
-        for (const native of natives) {
-            const nativePath = path.join(this.baseDir, 'libraries', native.path);
-            if (await fs.pathExists(nativePath)) {
-                logger.info(`Extracting ${native.name} natives from ${nativePath}`);
-                await extract(nativePath, {
-                    dir: nativesDir,
-                    onEntry: (entry) => {
-                        // Only extract DLL files and skip META-INF
-                        const valid = entry.fileName.endsWith('.dll') && !entry.fileName.includes('META-INF');
-                        if (valid) {
-                            logger.info(`Extracting native: ${entry.fileName}`);
+        // Handle LWJGL 3.x natives (1.17+)
+        const isLWJGL3 = parseFloat(version) >= 1.17;
+        
+        for (const lib of versionJson.libraries) {
+            if (!this.isLibraryCompatible(lib)) continue;
+            
+            // For LWJGL 3.x, check for natives in downloads.classifiers
+            if (isLWJGL3 && lib.downloads?.classifiers) {
+                const nativeKey = 'natives-windows';
+                const nativeData = lib.downloads.classifiers[nativeKey];
+                
+                if (nativeData) {
+                    const nativePath = path.join(this.baseDir, 'libraries', nativeData.path);
+                    if (await fs.pathExists(nativePath)) {
+                        logger.info(`Extracting native: ${nativePath}`);
+                        try {
+                            await extract(nativePath, {
+                                dir: nativesDir,
+                                onEntry: (entry) => {
+                                    // Only extract DLL files and skip META-INF
+                                    const valid = entry.fileName.endsWith('.dll') && 
+                                                !entry.fileName.includes('META-INF');
+                                    if (valid) {
+                                        logger.info(`Extracting native: ${entry.fileName}`);
+                                    }
+                                    return valid;
+                                }
+                            });
+                        } catch (err) {
+                            logger.error(`Failed to extract ${nativePath}: ${err.message}`);
                         }
-                        return valid;
                     }
-                });
-            } else {
-                logger.error(`Missing native library: ${nativePath}`);
+                }
+                continue;
+            }
+
+            // Handle legacy natives
+            if (lib.natives) {
+                const nativeKey = lib.natives.windows || lib.natives['windows-64'];
+                if (!nativeKey) continue;
+
+                let nativePath;
+                if (lib.downloads?.classifiers?.[nativeKey]) {
+                    nativePath = path.join(
+                        this.baseDir,
+                        'libraries',
+                        lib.downloads.classifiers[nativeKey].path
+                    );
+                } else if (lib.url && lib.name) {
+                    const parts = lib.name.split(':');
+                    const nativeSuffix = nativeKey.replace('${arch}', '64');
+                    nativePath = path.join(
+                        this.baseDir,
+                        'libraries',
+                        parts[0].replace(/\./g, '/'),
+                        parts[1],
+                        parts[2],
+                        `${parts[1]}-${parts[2]}-${nativeSuffix}.jar`
+                    );
+                }
+
+                if (nativePath && await fs.pathExists(nativePath)) {
+                    logger.info(`Extracting legacy native: ${nativePath}`);
+                    try {
+                        await extract(nativePath, {
+                            dir: nativesDir,
+                            onEntry: (entry) => {
+                                const valid = entry.fileName.endsWith('.dll') && 
+                                            !entry.fileName.includes('META-INF');
+                                if (valid) {
+                                    logger.info(`Extracting native: ${entry.fileName}`);
+                                }
+                                return valid;
+                            }
+                        });
+                    } catch (err) {
+                        logger.error(`Failed to extract ${nativePath}: ${err.message}`);
+                    }
+                }
             }
         }
 
@@ -434,271 +486,121 @@ class MinecraftLauncher {
             logger.info(`Set permissions for ${file}`);
         }
 
+        if (files.length === 0) {
+            throw new Error('No natives were extracted');
+        }
+
         logger.info(`Natives extracted: ${files.join(', ')}`);
-        return files.length > 0;
+        return true;
     }
 
     async launch(version, username, isTest = false) {
         try {
-            const gamePath = this.baseDir;
-            const versionPath = path.join(gamePath, 'versions', version);
-            
-            // Create necessary directories using fs-extra
-            const gameDir = path.join(this.baseDir);
-            const crashReportsDir = path.join(gameDir, 'crash-reports');
-            await fs.ensureDir(crashReportsDir);
-
-            logger.info(`Launching Minecraft ${version} for user ${username}`);
-            const installer = new MinecraftInstaller();
-            await installer.installVersion(version);
-
-            const hasJava = await this.verifyJava();
-            if (!hasJava) {
-                throw new Error('Java is not installed. Please install Java 17 or newer.');
-            }
-
             const versionDir = path.join(this.baseDir, 'versions', version);
             const versionJsonPath = path.join(versionDir, `${version}.json`);
             
-            // Verify version json exists
-            if (!await fs.pathExists(versionJsonPath)) {
-                throw new Error(`Version ${version} is not installed properly`);
+            // Check if version is installed
+            if (!fs.existsSync(versionJsonPath)) {
+                logger.info(`Version ${version} not installed, installing now...`);
+                const installer = new MinecraftInstaller();
+                await installer.installVersion(version);
+                
+                // Verify installation
+                if (!fs.existsSync(versionJsonPath)) {
+                    throw new Error(`Failed to install version ${version}`);
+                }
             }
 
             const versionJson = require(versionJsonPath);
-            const nativesDir = path.join(versionDir, 'natives');
-
-            // Extract natives before launch
-            await this.extractNativesForVersion(version, versionJson, nativesDir);
-
-            // Verify natives were extracted
-            const nativeFiles = await fs.readdir(nativesDir);
-            if (!nativeFiles.includes('lwjgl64.dll')) {
-                throw new Error('Critical native files are missing. Cannot launch game.');
-            }
-
-            // Verify client jar exists
-            const clientJar = path.join(versionDir, `${version}.jar`);
-            if (!await fs.pathExists(clientJar)) {
-                throw new Error('Game files are missing or corrupted');
-            }
-
-            const classpath = this.getLibrariesClasspath(version);
-            const mainClass = versionJson.mainClass;
-
+            
+            // Get required Java version first
             const requiredJavaVersion = this.getRequiredJavaVersion(versionJson);
             logger.info(`Required Java version for Minecraft ${version}: ${requiredJavaVersion}`);
             
-            // Ensure we get the correct Java version
+            // Find appropriate Java installation
             const javaPath = this.findJavaPath(requiredJavaVersion);
             if (!javaPath) {
-                throw new Error(`Required Java version (${requiredJavaVersion}) not found. Please install Java ${requiredJavaVersion === 'legacy' ? '8' : '17+'}`);
+                throw new Error(`Required Java version (${requiredJavaVersion}) not found`);
             }
 
-            // Log Java version being used
-            try {
-                const { execSync } = require('child_process');
-                const javaVersion = execSync(`"${javaPath}" -version 2>&1`).toString();
-                logger.info(`Using Java for Minecraft ${version}:\n${javaVersion.trim()}`);
-            } catch (error) {
-                logger.warn(`Could not verify Java version: ${error.message}`);
-            }
+            // Set up basic arguments map
+            const argMap = {
+                auth_player_name: username,
+                version_name: version,
+                game_directory: this.baseDir,
+                assets_root: path.join(this.baseDir, 'assets'),
+                assets_index_name: versionJson.assetIndex.id,
+                auth_uuid: this.generateUUID(),
+                auth_access_token: '0',
+                user_type: 'msa',
+                version_type: versionJson.type || 'release',
+                natives_directory: path.join(versionDir, 'natives'),
+                launcher_name: 'alright-launcher',
+                launcher_version: '3.0',
+                classpath: this.getLibrariesClasspath(version)
+            };
 
-            const maxMemory = process.env.MAX_MEMORY || '2G';
-
-            // Extract natives for old versions
-            if (parseFloat(version) <= 1.16) {
-                await this.extractLegacyNatives(version, versionJson, nativesDir);
-            }
-
-            const versionNum = parseFloat(version);
-            const isVeryOld = versionNum <= 1.6; // Versions 1.6 and below need special handling
-            const isLegacy = requiredJavaVersion === 'legacy';
-
-            // Modified command generation for very old versions
-            if (isVeryOld) {
-                const args = [
-                    `-Xmx${maxMemory}`,
-                    '-XX:+UnlockExperimentalVMOptions',
-                    '-XX:+UseG1GC',
-                    '-XX:G1NewSizePercent=20',
-                    '-XX:G1ReservePercent=20',
-                    '-XX:MaxGCPauseMillis=50',
-                    '-XX:G1HeapRegionSize=32M',
-                    `-Djava.library.path=${nativesDir}`,
-                    `-Dorg.lwjgl.librarypath=${nativesDir}`,
-                    `-Dnet.java.games.input.librarypath=${nativesDir}`,
-                    '-Dorg.lwjgl.opengl.Display.allowSoftwareOpenGL=true', // Add compatibility flag
-                    '-Dminecraft.launcher.brand=alright-launcher',
-                    '-Dminecraft.launcher.version=3.0',
-                    '-cp',
-                    classpath
-                ];
-
-                if (versionNum <= 1.5) {
-                    // For versions 1.5 and below
-                    args.push(
-                        'net.minecraft.client.Minecraft', // Direct main class for very old versions
-                        username // Old versions just take username directly
-                    );
-                } else {
-                    // For version 1.6.x
-                    const gameArgs = versionJson.minecraftArguments
-                        .replace('${auth_player_name}', username)
-                        .replace('${auth_session}', '0') // Old versions used session instead of access token
-                        .replace('${version_name}', version)
-                        .replace('${game_directory}', this.baseDir)
-                        .replace('${game_assets}', path.join(this.baseDir, 'assets'))
-                        .split(' ');
-
-                    args.push(mainClass, ...gameArgs);
-                }
-
-                logger.info(`Launch command for legacy version: ${javaPath} ${args.join(' ')}`);
-                
-                const minecraft = spawn(javaPath, args, {
-                    cwd: this.baseDir,
-                    stdio: ['pipe', 'pipe', 'pipe'],
-                    detached: !isTest
-                });
-
-                // Capture output for debugging
-                minecraft.stdout.on('data', (data) => {
-                    logger.info(`Game output: ${data}`);
-                });
-
-                minecraft.stderr.on('data', (data) => {
-                    logger.error(`Game error: ${data}`);
-                });
-
-                // Monitor process
-                const pid = minecraft.pid;
-                this.runningProcesses.set(version, pid);
-
-                minecraft.on('exit', (code, signal) => {
-                    this.runningProcesses.delete(version);
-                    logger.info(`Game process exited with code ${code} and signal ${signal}`);
-                });
-
-                if (!isTest) {
-                    minecraft.unref();
-                }
-
-                return { success: true, pid, process: minecraft };
-            }
-
-            const gameArgs = []; // Define gameArgs array at the start
-
-            // Handle very old versions (1.6.x and below)
-            if (isVeryOld) {
-                // Replace ${game_assets} with ${assets_root} for old versions
-                const args = versionJson.minecraftArguments
-                    .replace('${auth_player_name}', username)
-                    .replace('${auth_session}', '0') // Old versions used session instead of access token
-                    .replace('${version_name}', version)
-                    .replace('${game_directory}', this.baseDir)
-                    .replace('${game_assets}', path.join(this.baseDir, 'assets'))
-                    .split(' ');
-                gameArgs.push(...args);
-
-                // Continue with rest of launch code...
-            } else if (versionJson.arguments?.game) {
-                // Modern versions (1.13+)
-                const processedArgs = new Set(); // Track which arguments we've already added
-                
-                // First add arguments from versionJson
-                for (const arg of versionJson.arguments.game) {
-                    if (typeof arg === 'string') {
-                        const processedArg = arg
-                            .replace('${auth_player_name}', username)
-                            .replace('${version_name}', version)
-                            .replace('${game_directory}', this.baseDir)
-                            .replace('${assets_root}', path.join(this.baseDir, 'assets'))
-                            .replace('${assets_index_name}', versionJson.assetIndex.id)
-                            .replace('${user_type}', 'msa')
-                            .replace('${version_type}', 'release');
-                        
-                        // Check if this is an argument flag (starts with --)
-                        if (processedArg.startsWith('--')) {
-                            const argKey = processedArg.split(' ')[0];
-                            if (!processedArgs.has(argKey)) {
-                                gameArgs.push(processedArg);
-                                processedArgs.add(argKey);
-                            }
-                        } else {
-                            gameArgs.push(processedArg);
-                        }
-                    }
-                }
-
-                // Add required arguments only if they haven't been added yet
-                const requiredArgs = [
-                    ['--username', username],
-                    ['--version', version],
-                    ['--gameDir', this.baseDir],
-                    ['--assetsDir', path.join(this.baseDir, 'assets')],
-                    ['--assetIndex', versionJson.assetIndex.id],
-                    ['--accessToken', '0'],
-                    ['--userProperties', '{}'],
-                    ['--userType', 'msa'],
-                    ['--versionType', 'release'],
-                    ['--uuid', this.generateUUID().replace(/-/g, '')]
-                ];
-
-                for (const [key, value] of requiredArgs) {
-                    if (!processedArgs.has(key)) {
-                        gameArgs.push(key, value);
-                        processedArgs.add(key);
-                    }
-                }
-            } else if (versionJson.minecraftArguments) {
-                // Legacy versions with minecraftArguments
-                const args = versionJson.minecraftArguments
-                    .replace('${auth_player_name}', username)
-                    .replace('${version_name}', version)
-                    .replace('${game_directory}', this.baseDir)
-                    .replace('${assets_root}', path.join(this.baseDir, 'assets'))
-                    .replace('${assets_index_name}', versionJson.assetIndex.id)
-                    .replace('${auth_uuid}', this.generateUUID().replace(/-/g, ''))
-                    .replace('${auth_access_token}', '0')
-                    .replace('${user_properties}', '{}')
-                    .replace('${user_type}', 'msa')
-                    .replace('${version_type}', 'release')
-                    .split(' ');
-                gameArgs.push(...args);
-            } else {
-                // Very old versions or missing arguments
-                throw new Error('Invalid version data: missing game arguments');
-            }
-
-            const args = [
-                `-Xmx${maxMemory}`,
+            // Default JVM arguments
+            const defaultJvmArgs = [
+                `-Xmx${process.env.MAX_MEMORY || '2G'}`,
                 '-XX:+UnlockExperimentalVMOptions',
                 '-XX:+UseG1GC',
                 '-XX:G1NewSizePercent=20',
                 '-XX:G1ReservePercent=20',
                 '-XX:MaxGCPauseMillis=50',
                 '-XX:G1HeapRegionSize=32M',
-                // Add native path explicitly
-                `-Djava.library.path=${nativesDir}`,
-                `-Dorg.lwjgl.librarypath=${nativesDir}`,
-                `-Dnet.java.games.input.librarypath=${nativesDir}`,
-                '-Dminecraft.launcher.brand=alright-launcher',
-                '-Dminecraft.launcher.version=3.0',
-                '-cp',
-                classpath,
-                mainClass,
-                ...gameArgs
+                `-Djava.library.path=${argMap.natives_directory}`,
+                `-Dorg.lwjgl.librarypath=${argMap.natives_directory}`,
+                `-Dminecraft.launcher.brand=${argMap.launcher_name}`,
+                `-Dminecraft.launcher.version=${argMap.launcher_version}`
             ];
 
-            // Add legacy version detection
-            if (isLegacy && versionJson.mainClass === 'net.minecraft.launchwrapper.Launch') {
-                // Add launcher specific arguments for legacy versions
-                args.unshift('-Dlegacy.launcher=true');
-                args.unshift('-Djava.system.class.loader=net.minecraft.launchwrapper.Launch');
+            let args = [...defaultJvmArgs];
+
+            // Handle modern versions with arguments structure
+            if (versionJson.arguments) {
+                // Add JVM arguments if present
+                if (versionJson.arguments.jvm) {
+                    for (const arg of versionJson.arguments.jvm) {
+                        if (typeof arg === 'string') {
+                            args.push(this.processArgument(arg, argMap));
+                        } else if (arg.rules && this.checkRules(arg.rules)) {
+                            const value = Array.isArray(arg.value) ? arg.value : [arg.value];
+                            args.push(...value.map(v => this.processArgument(v, argMap)));
+                        }
+                    }
+                }
+
+                // Add classpath if not already added by JVM args
+                if (!args.some(arg => arg.startsWith('-cp') || arg.startsWith('-classpath'))) {
+                    args.push('-cp', argMap.classpath);
+                }
+
+                // Add main class
+                args.push(versionJson.mainClass);
+
+                // Add game arguments
+                for (const arg of versionJson.arguments.game) {
+                    if (typeof arg === 'string') {
+                        args.push(this.processArgument(arg, argMap));
+                    } else if (arg.rules && this.checkRules(arg.rules)) {
+                        const value = Array.isArray(arg.value) ? arg.value : [arg.value];
+                        args.push(...value.map(v => this.processArgument(v, argMap)));
+                    }
+                }
+            } else {
+                // Legacy version handling
+                args.push('-cp', argMap.classpath);
+                args.push(versionJson.mainClass);
+                
+                if (versionJson.minecraftArguments) {
+                    const gameArgs = versionJson.minecraftArguments.split(' ').map(arg => 
+                        this.processArgument(arg, argMap)
+                    );
+                    args.push(...gameArgs);
+                }
             }
 
-            // Log the complete command for debugging
             logger.info(`Launch command: ${javaPath} ${args.join(' ')}`);
 
             const minecraft = spawn(javaPath, args, {
@@ -707,7 +609,7 @@ class MinecraftLauncher {
                 detached: !isTest
             });
 
-            // Capture output for debugging
+            // Monitor process output
             minecraft.stdout.on('data', (data) => {
                 logger.info(`Game output: ${data}`);
             });
@@ -716,7 +618,6 @@ class MinecraftLauncher {
                 logger.error(`Game error: ${data}`);
             });
 
-            // Monitor process
             const pid = minecraft.pid;
             this.runningProcesses.set(version, pid);
 
@@ -734,6 +635,40 @@ class MinecraftLauncher {
             logger.error(`Launch error: ${error.stack}`);
             throw error;
         }
+    }
+
+    processArgument(arg, values) {
+        return arg.replace(/\${([^}]+)}/g, (match, key) => {
+            return values[key] || match;
+        });
+    }
+
+    checkRules(rules) {
+        for (const rule of rules) {
+            if (rule.os) {
+                // Check operating system rules
+                const osName = process.platform === 'win32' ? 'windows' : process.platform;
+                if (rule.os.name && rule.os.name !== osName) {
+                    return rule.action !== 'allow';
+                }
+                
+                // Check OS version if specified
+                if (rule.os.version) {
+                    const osVersion = require('os').release();
+                    const versionRegex = new RegExp(rule.os.version);
+                    if (!versionRegex.test(osVersion)) {
+                        return rule.action !== 'allow';
+                    }
+                }
+            }
+            
+            // Handle features if present
+            if (rule.features) {
+                // Currently we don't support any special features
+                return false;
+            }
+        }
+        return true;
     }
 
     generateXUID() {
