@@ -545,6 +545,93 @@ class MinecraftInstaller {
             throw error;
         }
     }
+
+    async downloadNatives(version) {
+        const versionJson = await fs.readJson(path.join(this.baseDir, 'versions', version, `${version}.json`));
+        const osName = this.getOSName();
+
+        for (const library of versionJson.libraries) {
+            if (!library.downloads?.classifiers) continue;
+
+            const nativeKey = `natives-${osName}`;
+            const nativeArtifact = library.downloads.classifiers[nativeKey];
+
+            if (!nativeArtifact) continue;
+
+            const libraryPath = path.join(this.baseDir, 'libraries', nativeArtifact.path);
+            
+            // Skip if already downloaded and valid
+            if (await this.validateFile(libraryPath, nativeArtifact.sha1)) {
+                continue;
+            }
+
+            // Download native library
+            await this.downloadFile(nativeArtifact.url, libraryPath);
+        }
+    }
+
+    async validateFile(filePath, expectedSha1) {
+        try {
+            const exists = await fs.pathExists(filePath);
+            if (!exists) return false;
+            
+            // TODO: Add SHA1 validation
+            return true;
+        } catch (err) {
+            return false;
+        }
+    }
+
+    async downloadFile(url, destination) {
+        await fs.ensureDir(path.dirname(destination));
+        const response = await fetch(url);
+        const buffer = await response.buffer();
+        await fs.writeFile(destination, buffer);
+    }
+
+    getOSName() {
+        switch(process.platform) {
+            case 'win32': return 'windows';
+            case 'darwin': return 'macos';
+            case 'linux': return 'linux';
+            default: throw new Error(`Unsupported platform: ${process.platform}`);
+        }
+    }
+
+    async downloadNativesFor120(version) {
+        const versionJson = await fs.readJson(path.join(this.baseDir, 'versions', version, `${version}.json`));
+        const osName = this.getOSName();
+        let downloadCount = 0;
+
+        for (const library of versionJson.libraries) {
+            if (!library.downloads?.classifiers) continue;
+
+            const nativeKey = `natives-${osName}`;
+            const nativeArtifact = library.downloads.classifiers[nativeKey];
+
+            if (!nativeArtifact) continue;
+
+            const libraryPath = path.join(this.baseDir, 'libraries', nativeArtifact.path);
+            
+            // Skip if already downloaded and valid
+            if (await this.validateFile(libraryPath, nativeArtifact.sha1)) {
+                continue;
+            }
+
+            // Ensure directory exists
+            await fs.ensureDir(path.dirname(libraryPath));
+
+            // Download native library
+            await this.downloadFile(
+                nativeArtifact.url,
+                libraryPath,
+                `Native: ${path.basename(libraryPath)}`
+            );
+            downloadCount++;
+        }
+
+        return downloadCount;
+    }
 }
 
 module.exports = MinecraftInstaller;
