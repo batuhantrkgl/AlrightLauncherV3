@@ -25,10 +25,6 @@ jobs:
         id: package-version
         uses: martinbeentjes/npm-get-version-action@v1.3.1
 
-      - name: Create tag
-        run: |
-          git tag v${{ steps.package-version.outputs.current-version}}
-          git push origin v${{ steps.package-version.outputs.current-version}}
 
       - name: Install dependencies
         run: bun install
@@ -41,7 +37,7 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: v${{ steps.package-version.outputs.current-version}}
+            tag_name: v${{ steps.package-version.outputs.current-version}}-${{ format('{0:yyyy-MM-dd-HH-mm}', github.event.repository.pushed_at) }}
           files: |
             dist/*.exe
             dist/latest.yml
