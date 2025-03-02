@@ -257,6 +257,10 @@ function registerIpcHandlers() {
             const response = await fetch('https://piston-meta.mojang.com/mc/game/version_manifest_v2.json');
             if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
             const data = await response.json();
+            
+            // Sort versions by version ID (newest first)
+            data.versions.sort((a, b) => compareVersions(a.id, b.id));
+            
             return data.versions;
         } catch (error) {
             console.error('Error fetching versions:', error);
@@ -547,12 +551,31 @@ process.on('unhandledRejection', (error) => {
     console.error('Unhandled promise rejection:', error);
 });
 
+// Add version comparison helper function
+function compareVersions(a, b) {
+    const aParts = a.split('.').map(part => parseInt(part, 10) || 0);
+    const bParts = b.split('.').map(part => parseInt(part, 10) || 0);
+    
+    for (let i = 0; i < Math.max(aParts.length, bParts.length); i++) {
+        const aVal = aParts[i] || 0;
+        const bVal = bParts[i] || 0;
+        if (aVal !== bVal) {
+            return bVal - aVal; // Descending order (newer first)
+        }
+    }
+    return 0;
+}
+
 async function getVersions() {
     try {
         const response = await fetch('https://piston-meta.mojang.com/mc/game/version_manifest_v2.json', {
             timeout: 30000 // Increase timeout to 30 seconds
         });
         const data = await response.json();
+        
+        // Sort versions by version ID (newest first)
+        data.versions.sort((a, b) => compareVersions(a.id, b.id));
+        
         return data.versions;
     } catch (error) {
         logger.warn(`Failed to fetch versions online: ${error}`);
@@ -564,6 +587,10 @@ async function getVersions() {
             
             if (installedVersions.length > 0) {
                 logger.info(`Using offline version list: ${installedVersions.join(', ')}`);
+                
+                // Sort installed versions
+                installedVersions.sort((a, b) => compareVersions(a, b));
+                
                 return installedVersions.map(version => ({
                     id: version,
                     type: 'release', // Assume release type for offline versions

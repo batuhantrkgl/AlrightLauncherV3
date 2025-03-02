@@ -13,6 +13,23 @@ if (!window.minecraft?.logger) {
     };
 }
 
+// Add version comparison function
+function compareVersions(a, b) {
+    // Split version strings into components (e.g., "1.19.2" => [1, 19, 2])
+    const aParts = a.split('.').map(part => parseInt(part, 10) || 0);
+    const bParts = b.split('.').map(part => parseInt(part, 10) || 0);
+    
+    // Compare each component
+    for (let i = 0; i < Math.max(aParts.length, bParts.length); i++) {
+        const aVal = aParts[i] || 0;
+        const bVal = bParts[i] || 0;
+        if (aVal !== bVal) {
+            return bVal - aVal; // Descending order (newer versions first)
+        }
+    }
+    return 0;
+}
+
 let isOperationInProgress = false;
 
 function showProgress(show = true) {
@@ -87,11 +104,16 @@ async function fetchVersions() {
         if (offlineMode) {
             window.minecraft.logger.info('Fetching installed versions (offline mode)');
             const versions = await window.minecraft.offline.getInstalledVersions();
+            // Sort versions by id (newest first)
+            versions.sort((a, b) => compareVersions(a.id, b.id));
             return versions;
         } else {
             window.minecraft.logger.info('Fetching online versions');
             const versions = await window.minecraft.getVersions();
-            return versions.filter(v => v.type === 'release');
+            const releaseVersions = versions.filter(v => v.type === 'release');
+            // Sort versions by id (newest first)
+            releaseVersions.sort((a, b) => compareVersions(a.id, b.id));
+            return releaseVersions;
         }
     } catch (error) {
         window.minecraft.logger.error('Error fetching versions:', error);
@@ -101,6 +123,9 @@ async function fetchVersions() {
             window.minecraft.logger.info('Falling back to installed versions');
             try {
                 const installedVersions = await window.minecraft.offline.getInstalledVersions();
+                // Sort installed versions
+                installedVersions.sort((a, b) => compareVersions(a.id, b.id));
+                
                 if (installedVersions.length > 0) {
                     // Suggest enabling offline mode
                     const shouldEnableOffline = confirm(
@@ -650,7 +675,7 @@ document.getElementById('createStandalone').addEventListener('click', async () =
     let versions = [];
 
     try {
-        // Fetch versions
+        // Fetch versions - already sorted by fetchVersions
         versions = await fetchVersions();
         
         // Populate version list
@@ -817,7 +842,7 @@ async function populateServerVersions() {
         window.minecraft.logger.info('Fetching versions for server creation...');
         const versions = await fetchVersions();
         
-        // Clear existing options
+        // Clear existing options - sorting handled by fetchVersions already
         serverVersionSelect.innerHTML = `
             <option value="" disabled selected>Select a version</option>
             ${versions.map(v => `<option value="${v.id}">${v.id}</option>`).join('')}
