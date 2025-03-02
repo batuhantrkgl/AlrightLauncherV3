@@ -48,48 +48,91 @@ jobs:
           echo "Scanning executables with VirusTotal..."
           VT_RESULTS=""
           
-          for file in dist/*.exe; do
-            if [ -f "$file" ]; then
-              echo "Scanning $file..."
-              RESPONSE=$(curl --request POST \
-                --url https://www.virustotal.com/api/v3/files \
-                --header "x-apikey: ${{ secrets.VT_API_KEY }}" \
-                --form "file=@$file")
-              
-              ANALYSIS_ID=$(echo $RESPONSE | jq -r '.data.id')
-              echo "Analysis ID: $ANALYSIS_ID"
-              
-              # Wait for analysis to complete (with timeout)
-              ATTEMPTS=0
-              MAX_ATTEMPTS=10
-              while [ $ATTEMPTS -lt $MAX_ATTEMPTS ]; do
-                sleep 30
-                ANALYSIS_RESPONSE=$(curl --request GET \
-                  --url "https://www.virustotal.com/api/v3/analyses/$ANALYSIS_ID" \
-                  --header "x-apikey: ${{ secrets.VT_API_KEY }}")
+          # Check if API key exists
+          if [ -z "${{ secrets.VT_API_KEY }}" ]; then
+            echo "::warning::VirusTotal API key not found. Skipping virus scan."
+            VT_RESULTS="⚠️ VirusTotal scan was skipped due to missing API key. Please add VT_API_KEY to repository secrets."
+          else
+            for file in dist/*.exe; do
+              if [ -f "$file" ]; then
+                echo "Scanning $file..."
+                FILE_NAME=$(basename "$file")
+                FILE_SIZE=$(du -h "$file" | cut -f1)
+                echo "File size: $FILE_SIZE"
                 
-                STATUS=$(echo $ANALYSIS_RESPONSE | jq -r '.data.attributes.status')
-                if [ "$STATUS" = "completed" ]; then
-                  break
+                # Upload file to VirusTotal
+                RESPONSE=$(curl --request POST \
+                  --url https://www.virustotal.com/api/v3/files \
+                  --header "x-apikey: ${{ secrets.VT_API_KEY }}" \
+                  --form "file=@$file" 2>/dev/null)
+                
+                # Check if response is valid JSON
+                if ! echo "$RESPONSE" | jq . >/dev/null 2>&1; then
+                  echo "Error: Invalid JSON response from VirusTotal API"
+                  echo "Response: $RESPONSE"
+                  VT_RESULTS="$VT_RESULTS\n- $FILE_NAME: Failed to upload (invalid API response)"
+                  continue
                 fi
                 
-                ATTEMPTS=$((ATTEMPTS+1))
-                echo "Waiting for analysis to complete... Attempt $ATTEMPTS/$MAX_ATTEMPTS"
-              done
-              
-              if [ "$STATUS" = "completed" ]; then
-                FILE_NAME=$(basename "$file")
-                MALICIOUS=$(echo $ANALYSIS_RESPONSE | jq -r '.data.attributes.stats.malicious')
-                SUSPICIOUS=$(echo $ANALYSIS_RESPONSE | jq -r '.data.attributes.stats.suspicious')
-                RESOURCE_ID=$(echo $ANALYSIS_RESPONSE | jq -r '.meta.file_info.sha256')
-                VT_LINK="https://www.virustotal.com/gui/file/$RESOURCE_ID"
+                # Check if API returned an error
+                if echo "$RESPONSE" | jq -e '.error' >/dev/null 2>&1; then
+                  ERROR_MSG=$(echo "$RESPONSE" | jq -r '.error.message')
+                  echo "VirusTotal API error: $ERROR_MSG"
+                  VT_RESULTS="$VT_RESULTS\n- $FILE_NAME: API Error - $ERROR_MSG"
+                  continue
+                fi
                 
-                VT_RESULTS="$VT_RESULTS\n- $FILE_NAME: $MALICIOUS malicious, $SUSPICIOUS suspicious - [View Report]($VT_LINK)"
-              else
-                VT_RESULTS="$VT_RESULTS\n- $FILE_NAME: Analysis timed out"
+                # Extract analysis ID
+                if ! ANALYSIS_ID=$(echo "$RESPONSE" | jq -r '.data.id' 2>/dev/null); then
+                  echo "Could not extract analysis ID from response"
+                  echo "Response: $RESPONSE"
+                  VT_RESULTS="$VT_RESULTS\n- $FILE_NAME: Failed to get analysis ID"
+                  continue
+                fi
+                
+                echo "Analysis ID: $ANALYSIS_ID"
+                
+                # Wait for analysis to complete (with timeout)
+                ATTEMPTS=0
+                MAX_ATTEMPTS=10
+                STATUS="pending"
+                
+                while [ $ATTEMPTS -lt $MAX_ATTEMPTS ] && [ "$STATUS" != "completed" ]; do
+                  sleep 30
+                  ANALYSIS_RESPONSE=$(curl --request GET \
+                    --url "https://www.virustotal.com/api/v3/analyses/$ANALYSIS_ID" \
+                    --header "x-apikey: ${{ secrets.VT_API_KEY }}" 2>/dev/null)
+                  
+                  # Check if response is valid JSON
+                  if ! echo "$ANALYSIS_RESPONSE" | jq . >/dev/null 2>&1; then
+                    echo "Error: Invalid JSON response when checking analysis status"
+                    ATTEMPTS=$((ATTEMPTS+1))
+                    continue
+                  fi
+                  
+                  # Extract status
+                  STATUS=$(echo "$ANALYSIS_RESPONSE" | jq -r '.data.attributes.status' 2>/dev/null)
+                  ATTEMPTS=$((ATTEMPTS+1))
+                  echo "Waiting for analysis to complete... Attempt $ATTEMPTS/$MAX_ATTEMPTS (Status: $STATUS)"
+                done
+                
+                if [ "$STATUS" = "completed" ]; then
+                  # Try to extract results
+                  if MALICIOUS=$(echo "$ANALYSIS_RESPONSE" | jq -r '.data.attributes.stats.malicious' 2>/dev/null) && \
+                     SUSPICIOUS=$(echo "$ANALYSIS_RESPONSE" | jq -r '.data.attributes.stats.suspicious' 2>/dev/null) && \
+                     RESOURCE_ID=$(echo "$ANALYSIS_RESPONSE" | jq -r '.meta.file_info.sha256' 2>/dev/null); then
+                    
+                    VT_LINK="https://www.virustotal.com/gui/file/$RESOURCE_ID"
+                    VT_RESULTS="$VT_RESULTS\n- $FILE_NAME: $MALICIOUS malicious, $SUSPICIOUS suspicious - [View Report]($VT_LINK)"
+                  else
+                    VT_RESULTS="$VT_RESULTS\n- $FILE_NAME: Analysis completed but unable to extract results"
+                  fi
+                else
+                  VT_RESULTS="$VT_RESULTS\n- $FILE_NAME: Analysis timed out or failed"
+                fi
               fi
-            fi
-          done
+            done
+          fi
           
           echo "virustotal_results<<EOF" >> $GITHUB_ENV
           echo -e "$VT_RESULTS" >> $GITHUB_ENV
