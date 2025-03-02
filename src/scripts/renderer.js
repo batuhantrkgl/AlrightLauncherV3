@@ -99,6 +99,23 @@ username.addEventListener('focus', function() {
     selection.addRange(range);
 });
 
+// Username handling - update to save on blur
+username.addEventListener('blur', function() {
+    this.classList.remove('editing');
+    // Save username to localStorage when user finishes editing
+    localStorage.setItem('lastUsername', this.textContent);
+});
+
+username.addEventListener('focus', function() {
+    this.classList.add('editing');
+    const selection = window.getSelection();
+    const range = document.createRange();
+    range.setStart(this.childNodes[0], 1);
+    range.setEnd(this.childNodes[0], this.textContent.length);
+    selection.removeAllRanges();
+    selection.addRange(range);
+});
+
 async function fetchVersions() {
     try {
         if (offlineMode) {
@@ -170,10 +187,15 @@ document.addEventListener('click', (e) => {
     }
 });
 
+// Modify version selection to save the selected version
 dropdown.addEventListener('click', (e) => {
     if (e.target.classList.contains('version-item')) {
-        versionElement.textContent = e.target.textContent;
+        const selectedVersion = e.target.textContent;
+        versionElement.textContent = selectedVersion;
         dropdown.style.display = 'none';
+        
+        // Save selected version to localStorage
+        localStorage.setItem('lastVersion', selectedVersion);
     }
 });
 
@@ -347,6 +369,20 @@ window.minecraft.window.onFullscreenChange((isFullscreen) => {
 window.addEventListener('DOMContentLoaded', async () => {
     window.minecraft.logger.info('=== Loading saved settings ===');
     
+    // Load previously used username
+    const savedUsername = localStorage.getItem('lastUsername');
+    if (savedUsername) {
+        document.getElementById('username').textContent = savedUsername;
+        window.minecraft.logger.info(`Loaded saved username: ${savedUsername}`);
+    }
+    
+    // Load last played version and update the UI
+    const savedVersion = localStorage.getItem('lastVersion');
+    if (savedVersion) {
+        document.getElementById('version').textContent = savedVersion;
+        window.minecraft.logger.info(`Loaded last played version: ${savedVersion}`);
+    }
+    
     const savedRam = localStorage.getItem('maxRam');
     window.minecraft.logger.info(`Saved RAM: ${savedRam || 'default'}`);
     
@@ -398,6 +434,25 @@ window.addEventListener('DOMContentLoaded', async () => {
     // If offline mode is enabled, update installed versions
     if (offlineMode) {
         await updateInstalledVersions();
+    }
+    
+    // Check Java availability after loading saved settings
+    const playButton = document.querySelector('.play-button');
+    playButton.disabled = true;
+    playButton.textContent = 'Checking Java...';
+
+    try {
+        const hasJava = await window.minecraft.isJavaInstalled();
+        if (!hasJava) {
+            playButton.textContent = 'Java Required';
+            playButton.disabled = true;
+            return;
+        }
+        playButton.disabled = false;
+        playButton.textContent = 'Play';
+    } catch (error) {
+        window.minecraft.logger.error(`Startup Java check failed: ${error.message}`);
+        playButton.textContent = 'Java Error';
     }
 });
 
@@ -559,6 +614,10 @@ async function playGame() {
     
     const version = document.getElementById('version').textContent;
     const username = document.getElementById('username').textContent;
+    
+    // Save both values when launching the game
+    localStorage.setItem('lastUsername', username);
+    localStorage.setItem('lastVersion', version);
     
     try {
         showProgress(true);
