@@ -3,6 +3,9 @@ name: Build and Release
 on:
   push:
 
+permissions:
+  contents: write
+
 jobs:
   release:
     runs-on: ubuntu-latest
