@@ -28,6 +28,12 @@ jobs:
       - name: Install dependencies
         run: bun install
 
+      - name: Install Wine
+        run: |
+          sudo dpkg --add-architecture i386
+          sudo apt-get update
+          sudo apt-get install -y wine64 wine32
+
       - name: Build Electron app
         run: bun run build
         env:
