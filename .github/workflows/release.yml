@@ -41,11 +41,69 @@ jobs:
         run: bun run build
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          
+      - name: Scan with VirusTotal
+        id: virustotal
+        run: |
+          echo "Scanning executables with VirusTotal..."
+          VT_RESULTS=""
+          
+          for file in dist/*.exe; do
+            if [ -f "$file" ]; then
+              echo "Scanning $file..."
+              RESPONSE=$(curl --request POST \
+                --url https://www.virustotal.com/api/v3/files \
+                --header "x-apikey: ${{ secrets.VT_API_KEY }}" \
+                --form "file=@$file")
+              
+              ANALYSIS_ID=$(echo $RESPONSE | jq -r '.data.id')
+              echo "Analysis ID: $ANALYSIS_ID"
+              
+              # Wait for analysis to complete (with timeout)
+              ATTEMPTS=0
+              MAX_ATTEMPTS=10
+              while [ $ATTEMPTS -lt $MAX_ATTEMPTS ]; do
+                sleep 30
+                ANALYSIS_RESPONSE=$(curl --request GET \
+                  --url "https://www.virustotal.com/api/v3/analyses/$ANALYSIS_ID" \
+                  --header "x-apikey: ${{ secrets.VT_API_KEY }}")
+                
+                STATUS=$(echo $ANALYSIS_RESPONSE | jq -r '.data.attributes.status')
+                if [ "$STATUS" = "completed" ]; then
+                  break
+                fi
+                
+                ATTEMPTS=$((ATTEMPTS+1))
+                echo "Waiting for analysis to complete... Attempt $ATTEMPTS/$MAX_ATTEMPTS"
+              done
+              
+              if [ "$STATUS" = "completed" ]; then
+                FILE_NAME=$(basename "$file")
+                MALICIOUS=$(echo $ANALYSIS_RESPONSE | jq -r '.data.attributes.stats.malicious')
+                SUSPICIOUS=$(echo $ANALYSIS_RESPONSE | jq -r '.data.attributes.stats.suspicious')
+                RESOURCE_ID=$(echo $ANALYSIS_RESPONSE | jq -r '.meta.file_info.sha256')
+                VT_LINK="https://www.virustotal.com/gui/file/$RESOURCE_ID"
+                
+                VT_RESULTS="$VT_RESULTS\n- $FILE_NAME: $MALICIOUS malicious, $SUSPICIOUS suspicious - [View Report]($VT_LINK)"
+              else
+                VT_RESULTS="$VT_RESULTS\n- $FILE_NAME: Analysis timed out"
+              fi
+            fi
+          done
+          
+          echo "virustotal_results<<EOF" >> $GITHUB_ENV
+          echo -e "$VT_RESULTS" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
           tag_name: v${{ steps.package-version.outputs.current-version}}-${{ github.run_number }}
+          body: |
+            ## VirusTotal Scan Results
+            ${{ env.virustotal_results }}
+            
+            ## Release Files
           files: |
             dist/*.exe
             dist/latest.yml
