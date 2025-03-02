@@ -9,7 +9,7 @@ on:
 
 jobs:
   release:
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
 
     steps:
       - name: Check out Git repository
@@ -19,6 +19,11 @@ jobs:
         uses: actions/setup-node@v3
         with:
           node-version: 16
+
+      - name: Install bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
 
       - name: Get version
         id: package-version
@@ -30,10 +35,10 @@ jobs:
           git push origin v${{ steps.package-version.outputs.current-version}}
 
       - name: Install dependencies
-        run: npm install
+        run: bun install
 
       - name: Build Electron app
-        run: npm run build
+        run: bun run build
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
