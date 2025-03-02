@@ -1,5 +1,15 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
+// Debug function for IPC calls
+function safeIpcInvoke(channel, ...args) {
+    console.log(`Renderer calling IPC: ${channel}`, ...(args || []));
+    return ipcRenderer.invoke(channel, ...args)
+        .catch(error => {
+            console.error(`Error in IPC ${channel}:`, error);
+            throw error; // Rethrow to allow caller to handle
+        });
+}
+
 // Create basic utilities without external modules
 const safeUtils = {
     pathJoin: (...args) => args.join('/').replace(/\\/g, '/'),
@@ -27,27 +37,29 @@ contextBridge.exposeInMainWorld('minecraft', {
             }
         },
         clearLogs: () => ipcRenderer.send('clear-logs'),
-        saveLogs: () => ipcRenderer.invoke('save-logs')
+        saveLogs: () => safeIpcInvoke('save-logs')
     },
     window: {
-        toggleFullscreen: () => ipcRenderer.invoke('toggle-fullscreen'),
-        isFullscreen: () => ipcRenderer.invoke('is-fullscreen'),
+        toggleFullscreen: () => safeIpcInvoke('toggle-fullscreen'),
+        isFullscreen: () => safeIpcInvoke('is-fullscreen'),
         onFullscreenChange: (callback) => {
             if (typeof callback === 'function') {
                 ipcRenderer.on('fullscreen-change', (_, value) => callback(value));
             }
         }
     },
-    installVersion: (version) => ipcRenderer.invoke('install-version', version),
-    launchGame: (version, username) => ipcRenderer.invoke('launch-game', { version, username }),
-    checkJava: () => ipcRenderer.invoke('verify-java'),
-    isJavaInstalled: () => ipcRenderer.invoke('verify-java'),
-    getVersions: () => ipcRenderer.invoke('get-versions'),
-    isGameRunning: (version) => ipcRenderer.invoke('is-game-running', version),
+    installVersion: (version) => safeIpcInvoke('install-version', version),
+    launchGame: (version, username, options) => 
+        safeIpcInvoke('launch-game', { version, username, ...options }),
+    checkJava: () => safeIpcInvoke('verify-java'),
+    isJavaInstalled: () => safeIpcInvoke('verify-java'),
+    getVersions: () => safeIpcInvoke('get-versions'),
+    isGameRunning: (version) => safeIpcInvoke('is-game-running', version),
+    verifyGameFiles: (version) => safeIpcInvoke('verify-game-files', version),
     auth: {
-        login: () => ipcRenderer.invoke('authenticate'),
-        logout: () => ipcRenderer.invoke('logout'),
-        getProfile: () => ipcRenderer.invoke('get-profile'),
+        login: () => safeIpcInvoke('authenticate'),
+        logout: () => safeIpcInvoke('logout'),
+        getProfile: () => safeIpcInvoke('get-profile'),
         onProfileUpdate: (callback) => {
             if (typeof callback === 'function') {
                 ipcRenderer.on('profile-update', (_, profile) => callback(profile));
@@ -57,10 +69,13 @@ contextBridge.exposeInMainWorld('minecraft', {
     ipc: {
         invoke: (channel, ...args) => {
             const validChannels = [
-                'create-standalone'
+                'create-standalone',
+                'download-java',
+                'verify-game-files',
+                'get-installed-versions'
             ];
             if (validChannels.includes(channel)) {
-                return ipcRenderer.invoke(channel, ...args);
+                return safeIpcInvoke(channel, ...args);
             }
             throw new Error(`Invalid IPC channel: ${channel}`);
         }
@@ -76,10 +91,10 @@ contextBridge.exposeInMainWorld('minecraft', {
         }
     },
     server: {
-        create: (options) => ipcRenderer.invoke('create-server', options),
-        start: (name, memory) => ipcRenderer.invoke('start-server', { name, memory }),
-        stop: (name) => ipcRenderer.invoke('stop-server', name),
-        list: () => ipcRenderer.invoke('get-servers'),
+        create: (options) => safeIpcInvoke('create-server', options),
+        start: (name, memory) => safeIpcInvoke('start-server', { name, memory }),
+        stop: (name) => safeIpcInvoke('stop-server', name),
+        list: () => safeIpcInvoke('get-servers'),
         onLog: (callback) => {
             if (typeof callback === 'function') {
                 ipcRenderer.on('server-log', (_, data) => callback(data));
@@ -90,6 +105,12 @@ contextBridge.exposeInMainWorld('minecraft', {
         if (typeof callback === 'function') {
             ipcRenderer.on('install-progress', (_, data) => callback(data));
         }
+    },
+    // New APIs for offline mode using the safe invoke
+    offline: {
+        getInstalledVersions: () => safeIpcInvoke('get-installed-versions'),
+        verifyFiles: (version) => safeIpcInvoke('verify-game-files', version),
+        getFileStatus: (version) => safeIpcInvoke('get-file-status', version)
     }
 });
 
@@ -101,7 +122,7 @@ contextBridge.exposeInMainWorld('api', {
             'logout'
         ];
         if (validChannels.includes(channel)) {
-            return ipcRenderer.invoke(channel, data);
+            return safeIpcInvoke(channel, data);
         }
         return Promise.reject(new Error(`Invalid channel: ${channel}`));
     }

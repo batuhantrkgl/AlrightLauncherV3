@@ -84,10 +84,45 @@ username.addEventListener('focus', function() {
 
 async function fetchVersions() {
     try {
-        const versions = await window.minecraft.getVersions();
-        return versions.filter(v => v.type === 'release');
+        if (offlineMode) {
+            window.minecraft.logger.info('Fetching installed versions (offline mode)');
+            const versions = await window.minecraft.offline.getInstalledVersions();
+            return versions;
+        } else {
+            window.minecraft.logger.info('Fetching online versions');
+            const versions = await window.minecraft.getVersions();
+            return versions.filter(v => v.type === 'release');
+        }
     } catch (error) {
-        console.error('Error fetching versions:', error);
+        window.minecraft.logger.error('Error fetching versions:', error);
+        
+        // If online fetch fails, try to fall back to offline versions
+        if (!offlineMode) {
+            window.minecraft.logger.info('Falling back to installed versions');
+            try {
+                const installedVersions = await window.minecraft.offline.getInstalledVersions();
+                if (installedVersions.length > 0) {
+                    // Suggest enabling offline mode
+                    const shouldEnableOffline = confirm(
+                        "Failed to fetch online versions. Would you like to enable offline mode?"
+                    );
+                    
+                    if (shouldEnableOffline) {
+                        offlineToggle.checked = true;
+                        offlineMode = true;
+                        localStorage.setItem('offlineMode', true);
+                        
+                        // Enable skip verification toggle
+                        skipVerificationToggle.disabled = false;
+                    }
+                    
+                    return installedVersions;
+                }
+            } catch (fallbackError) {
+                window.minecraft.logger.error('Fallback to offline versions failed:', fallbackError);
+            }
+        }
+        
         return [];
     }
 }
@@ -160,6 +195,75 @@ const ramSlider = document.getElementById('ram-slider');
 const ramValue = document.getElementById('ram-value');
 const themeToggle = document.getElementById('theme-toggle');
 const fullscreenToggle = document.getElementById('fullscreen-toggle');
+
+// Add settings for offline mode
+const offlineToggle = document.getElementById('offline-toggle');
+const skipVerificationToggle = document.getElementById('skip-verification-toggle');
+let offlineMode = false;
+let skipVerification = false;
+
+// Offline mode toggle handler
+offlineToggle.addEventListener('change', (e) => {
+    offlineMode = e.target.checked;
+    localStorage.setItem('offlineMode', offlineMode);
+    
+    // Enable/disable skip verification based on offline mode
+    skipVerificationToggle.disabled = !offlineMode;
+    if (!offlineMode) {
+        skipVerificationToggle.checked = false;
+        skipVerification = false;
+        localStorage.setItem('skipVerification', false);
+    }
+    
+    window.minecraft.logger.info(`Offline mode ${offlineMode ? 'enabled' : 'disabled'}`);
+    
+    // If enabling offline mode, check installed versions
+    if (offlineMode) {
+        updateInstalledVersions();
+    }
+});
+
+// Skip verification toggle handler
+skipVerificationToggle.addEventListener('change', (e) => {
+    skipVerification = e.target.checked;
+    localStorage.setItem('skipVerification', skipVerification);
+    window.minecraft.logger.info(`Skip verification ${skipVerification ? 'enabled' : 'disabled'}`);
+});
+
+// Function to update installed versions when in offline mode
+async function updateInstalledVersions() {
+    try {
+        window.minecraft.logger.info('Fetching installed versions for offline mode...');
+        const installedVersions = await window.minecraft.offline.getInstalledVersions();
+        
+        if (installedVersions.length === 0) {
+            window.minecraft.logger.warn('No installed versions found. Offline mode might not work properly.');
+            offlineToggle.checked = false;
+            offlineMode = false;
+            localStorage.setItem('offlineMode', false);
+            return;
+        }
+        
+        window.minecraft.logger.info(`Found ${installedVersions.length} installed versions`);
+        
+        // If we're in offline mode, update the version dropdown to only show installed versions
+        if (offlineMode) {
+            dropdown.innerHTML = installedVersions
+                .map(v => `<div class="version-item">${v.id}</div>`)
+                .join('');
+                
+            // If current selected version is not installed, select the first installed version
+            const currentVersion = versionElement.textContent;
+            const isCurrentInstalled = installedVersions.some(v => v.id === currentVersion);
+            
+            if (!isCurrentInstalled && installedVersions.length > 0) {
+                versionElement.textContent = installedVersions[0].id;
+            }
+        }
+    } catch (error) {
+        window.minecraft.logger.error('Failed to fetch installed versions:', error);
+    }
+}
 
 // Update settings toggle handler
 debugToggle?.addEventListener('click', () => {
@@ -250,6 +354,26 @@ window.addEventListener('DOMContentLoaded', async () => {
     fullscreenToggle.checked = isFullscreen;
     
     window.minecraft.logger.info('=== Settings loaded successfully ===');
+    
+    // Load offline mode settings
+    const savedOfflineMode = localStorage.getItem('offlineMode') === 'true';
+    const savedSkipVerification = localStorage.getItem('skipVerification') === 'true';
+    
+    window.minecraft.logger.info(`Saved offline mode: ${savedOfflineMode}`);
+    window.minecraft.logger.info(`Saved skip verification: ${savedSkipVerification}`);
+    
+    // Apply settings
+    offlineMode = savedOfflineMode;
+    skipVerification = savedSkipVerification;
+    
+    offlineToggle.checked = offlineMode;
+    skipVerificationToggle.checked = skipVerification;
+    skipVerificationToggle.disabled = !offlineMode;
+    
+    // If offline mode is enabled, update installed versions
+    if (offlineMode) {
+        await updateInstalledVersions();
+    }
 });
 
 // Check Java on startup
@@ -413,35 +537,41 @@ async function playGame() {
     
     try {
         showProgress(true);
-        updateProgress(0, 'Checking Java installation...');
+        updateProgress(0, 'Preparing to launch...');
         
-        // Get version manifest first
-        const versions = await window.minecraft.getVersions();
-        const versionInfo = versions.find(v => v.id === version);
-        
-        if (!versionInfo) {
-            throw new Error('Version information not found');
+        // If in offline mode, verify files unless skipped
+        if (offlineMode && !skipVerification) {
+            updateProgress(10, 'Verifying game files...');
+            
+            try {
+                const verificationResult = await window.minecraft.offline.verifyFiles(version);
+                
+                if (!verificationResult.success) {
+                    const missingFiles = verificationResult.missing || [];
+                    const corruptedFiles = verificationResult.corrupted || [];
+                    
+                    if (missingFiles.length > 0 || corruptedFiles.length > 0) {
+                        throw new Error(
+                            `File verification failed. Missing: ${missingFiles.length}, Corrupted: ${corruptedFiles.length}`
+                        );
+                    }
+                }
+                
+                window.minecraft.logger.info('File verification passed');
+            } catch (verifyError) {
+                throw new Error(`File verification error: ${verifyError.message}`);
+            }
         }
-
-        // Check if version needs legacy Java
-        const needsLegacyJava = parseFloat(version) <= 1.16;
+        
+        updateProgress(40, 'Checking Java installation...');
         const javaVersion = await window.minecraft.checkJava();
         
         if (!javaVersion.installed) {
-            if (needsLegacyJava) {
-                updateProgress(100, 'Java 8 Required', 'This version requires Java 8');
-            } else {
-                updateProgress(100, 'Java Required', 'Please install Java 17 or newer');
-            }
-            setTimeout(() => showProgress(false), 2000);
-            return;
+            throw new Error('Java is not properly installed');
         }
-
-        updateProgress(20, 'Verifying game files...');
-        // Verify installation code...
-
-        updateProgress(40, 'Preparing to launch...');
-        const launched = await window.minecraft.launchGame(version, username);
+        
+        updateProgress(60, 'Launching game...');
+        const launched = await window.minecraft.launchGame(version, username, { offline: offlineMode });
         
         if (launched.success) {
             updateProgress(100, 'Game launched successfully!');
@@ -458,6 +588,59 @@ async function playGame() {
 
 // Attach play button click handler
 document.querySelector('.play-button').addEventListener('click', playGame);
+
+// Expose a method to manually verify files
+window.verifyFiles = async (version) => {
+    try {
+        showProgress(true);
+        updateProgress(0, 'Starting file verification...');
+        
+        const versionToVerify = version || document.getElementById('version').textContent;
+        
+        // Get file status first
+        updateProgress(20, 'Checking file status...');
+        const fileStatus = await window.minecraft.offline.getFileStatus(versionToVerify);
+        
+        updateProgress(50, 'Verifying file integrity...');
+        const result = await window.minecraft.offline.verifyFiles(versionToVerify);
+        
+        if (result.success) {
+            updateProgress(100, 'Verification successful', 'All files are valid');
+            setTimeout(() => {
+                showProgress(false);
+                alert('Verification successful. All files are valid.');
+            }, 1000);
+        } else {
+            const message = `Verification failed. Missing: ${result.missing.length}, Corrupted: ${result.corrupted.length}`;
+            updateProgress(100, 'Verification failed', message);
+            setTimeout(() => {
+                showProgress(false);
+                alert(message);
+            }, 1000);
+        }
+        
+        return result;
+    } catch (error) {
+        updateProgress(100, 'Verification error', error.message);
+        setTimeout(() => showProgress(false), 1000);
+        throw error;
+    }
+};
+
+// Add a "Verify Files" button in the settings modal
+const verifyFilesBtn = document.createElement('button');
+verifyFilesBtn.className = 'settings-button';
+verifyFilesBtn.textContent = 'Verify Game Files';
+verifyFilesBtn.addEventListener('click', () => window.verifyFiles());
+
+// Add the button to the Game Settings section
+const gameSettingsSection = document.querySelector('.settings-section:nth-of-type(4)');
+if (gameSettingsSection) {
+    const buttonContainer = document.createElement('div');
+    buttonContainer.className = 'setting-item';
+    buttonContainer.appendChild(verifyFilesBtn);
+    gameSettingsSection.appendChild(buttonContainer);
+}
 
 // Add event handler in renderer process
 document.getElementById('createStandalone').addEventListener('click', async () => {

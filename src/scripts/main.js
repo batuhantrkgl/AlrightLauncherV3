@@ -7,6 +7,8 @@ const MinecraftInstaller = require('./minecraft-installer');
 const { checkIcon } = require('./iconTest');
 const ServerManager = require('./server-manager');
 const MockAuthServer = require('./mock-auth-server');
+const FileManager = require('./fileManager');
+const logger = require('./logger');
 
 // Add this helper function at the top level
 function resolveAppPath(relativePath) {
@@ -68,6 +70,7 @@ let mainWindow = null;
 let minecraftLauncher = null;
 let serverManager = null;
 let mockAuthServer = null;
+let fileManager = null;
 
 function registerIpcHandlers() {
     // Clear existing handlers first
@@ -356,6 +359,55 @@ function registerIpcHandlers() {
         } catch (error) {
             console.error('Get servers error:', error);
             return [];
+        }
+    });
+
+    // Add file-related handlers
+    ipcMain.handle('get-installed-versions', async () => {
+        try {
+            if (!fileManager) {
+                fileManager = new FileManager(global.minecraftPath);
+            }
+            return await fileManager.getInstalledVersions();
+        } catch (error) {
+            console.error('Error getting installed versions:', error);
+            return [];
+        }
+    });
+
+    ipcMain.handle('verify-game-files', async (event, version) => {
+        try {
+            if (!fileManager) {
+                fileManager = new FileManager(global.minecraftPath);
+            }
+            return await fileManager.verifyGameFiles(version);
+        } catch (error) {
+            console.error('Error verifying game files:', error);
+            return { success: false, error: error.message };
+        }
+    });
+
+    ipcMain.handle('get-file-status', async (event, version) => {
+        try {
+            if (!fileManager) {
+                fileManager = new FileManager(global.minecraftPath);
+            }
+            return await fileManager.getFileStatus(version);
+        } catch (error) {
+            console.error('Error getting file status:', error);
+            return { error: error.message };
+        }
+    });
+
+    ipcMain.handle('download-java', async (event, url) => {
+        try {
+            if (!fileManager) {
+                fileManager = new FileManager(global.minecraftPath);
+            }
+            return await fileManager.downloadJava(url);
+        } catch (error) {
+            console.error('Error downloading Java:', error);
+            return false;
         }
     });
 
