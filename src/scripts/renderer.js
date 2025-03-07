@@ -565,8 +565,26 @@ async function downloadJava() {
         const downloadUrl = await getJavaDownloadUrl();
         window.minecraft.logger.info('Starting Java download from: ' + downloadUrl);
         
-        // Use IPC to trigger the download in the main process
-        const success = await window.minecraft.ipc.invoke('download-java', downloadUrl);
+        // Create progress indicator in the UI
+        const progressElement = document.createElement('div');
+        progressElement.className = 'java-download-progress';
+        progressElement.innerHTML = '<span>Downloading Java...</span><progress value="0" max="100"></progress>';
+        document.body.appendChild(progressElement);
+        
+        // Use IPC to trigger the download in the main process with progress updates
+        const success = await window.minecraft.ipc.invoke('download-java', downloadUrl, (progress) => {
+            const progressBar = progressElement.querySelector('progress');
+            if (progressBar) {
+                progressBar.value = progress;
+                progressElement.querySelector('span').textContent = `Downloading Java... ${progress}%`;
+            }
+        });
+        
+        // Remove progress indicator
+        if (progressElement.parentNode) {
+            progressElement.parentNode.removeChild(progressElement);
+        }
+        
         if (!success) {
             throw new Error('Download process failed');
         }
