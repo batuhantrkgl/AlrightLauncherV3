@@ -496,8 +496,7 @@ class MinecraftLauncher {
     }
 
     isVersion119OrNewer(version) {
-        const majorVersion = parseFloat(version);
-        return majorVersion >= 1.19;
+        return this.isVersionNewerOrEqual(version, '1.19');
     }
 
     async extractModernNatives(version, versionJson, nativesDir) {
@@ -875,7 +874,7 @@ class MinecraftLauncher {
                 version_name: version,
                 game_directory: this.baseDir,
                 assets_root: path.join(this.baseDir, 'assets'),
-                assets_index_name: versionJson.assetIndex.id,
+                assets_index_name: versionJson.assetIndex?.id || "legacy",
                 auth_uuid: this.generateUUID(),
                 auth_access_token: '0',
                 user_type: 'msa',
@@ -947,11 +946,11 @@ class MinecraftLauncher {
                 }
             }
 
-            // Determine native extraction method based on version
-            const versionNumber = parseFloat(version);
-            if (versionNumber === 1.20) {
+            // Determine native extraction method based on exact version string match
+            // to prevent 1.2.1 being treated like 1.20
+            if (version === '1.20' || version === '1.21') {
                 await this.extract120Natives(version, argMap.natives_directory);
-            } else if (this.isVersion119OrNewer(version)) {
+            } else if (this.isVersionNewerOrEqual(version, '1.19')) {
                 await this.extractModernNatives(version, versionJson, argMap.natives_directory);
             } else {
                 await this.extractLegacyNatives(version, versionJson, argMap.natives_directory);
@@ -1045,6 +1044,36 @@ class MinecraftLauncher {
             this.runningProcesses.delete(version);
             return false;
         }
+    }
+
+    // Add a proper version comparison function
+    isVersionNewerOrEqual(version1, version2) {
+        // Split versions into components
+        const v1Parts = version1.split('.').map(part => {
+            const num = parseInt(part, 10);
+            return isNaN(num) ? 0 : num;
+        });
+        
+        const v2Parts = version2.split('.').map(part => {
+            const num = parseInt(part, 10);
+            return isNaN(num) ? 0 : num;
+        });
+        
+        // Compare each component
+        for (let i = 0; i < Math.max(v1Parts.length, v2Parts.length); i++) {
+            const v1Part = v1Parts[i] || 0;
+            const v2Part = v2Parts[i] || 0;
+            
+            if (v1Part > v2Part) {
+                return true;
+            } 
+            if (v1Part < v2Part) {
+                return false;
+            }
+        }
+        
+        // Versions are equal
+        return true;
     }
 }
 
