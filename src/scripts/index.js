@@ -8,6 +8,14 @@ const { spawn } = require('child_process');
 let mainWindow;
 let versionManager;
 
+// Check if we are running in development mode
+const isDevelopmentMode = () => {
+    return process.env.NODE_ENV === 'development' || 
+           process.defaultApp || 
+           /[\\/]electron-prebuilt[\\/]/.test(process.execPath) || 
+           /[\\/]electron[\\/]/.test(process.execPath);
+};
+
 // Clear any existing handlers to avoid duplicates
 function clearExistingHandlers() {
     // List of all handlers we need to manage
@@ -194,8 +202,13 @@ function createWindow() {
     // Load the HTML file
     mainWindow.loadFile(path.join(__dirname, '..', 'pages', 'index.html'));
     
-    // For debugging
-    mainWindow.webContents.openDevTools();
+    // Only open DevTools in development mode
+    if (isDevelopmentMode()) {
+        console.log('Running in development mode, opening DevTools');
+        mainWindow.webContents.openDevTools();
+    } else {
+        console.log('Running in production mode, DevTools disabled');
+    }
     
     // Debug events
     mainWindow.webContents.on('did-finish-load', () => {
@@ -231,6 +244,9 @@ function createWindow() {
 
 // This ensures app initialization is synchronous and in the correct order
 app.whenReady().then(async () => {
+    // Log application mode
+    console.log(`Application starting in ${isDevelopmentMode() ? 'development' : 'production'} mode`);
+    
     try {
         // 1. Initialize directories
         const minecraftDir = initializeDirectories();

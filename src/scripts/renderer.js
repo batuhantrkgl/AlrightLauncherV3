@@ -328,6 +328,38 @@ document.querySelector('.settings-close')?.addEventListener('click', () => {
     }
 });
 
+// Add tab functionality
+document.querySelectorAll('.settings-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+        const tabId = tab.getAttribute('data-tab');
+        
+        // Update active tab
+        document.querySelectorAll('.settings-tab').forEach(t => {
+            t.classList.remove('active');
+        });
+        tab.classList.add('active');
+        
+        // Update active content
+        document.querySelectorAll('.tab-content').forEach(content => {
+            content.classList.remove('active');
+        });
+        document.getElementById(tabId).classList.add('active');
+        
+        window.minecraft.logger.info(`Settings tab switched to: ${tabId}`);
+    });
+});
+
+// Close settings when clicking outside the modal
+document.addEventListener('click', (e) => {
+    if (settingsModal && settingsModal.style.display === 'flex') {
+        // Check if the click target is outside the settings content and not the settings toggle button
+        if (!e.target.closest('.settings-content') && !e.target.closest('.debug-toggle')) {
+            settingsModal.style.display = 'none';
+            window.minecraft.logger.info('Settings closed by clicking outside');
+        }
+    }
+});
+
 // RAM slider
 if (ramSlider && ramValue) {
     ramSlider.addEventListener('input', (e) => {
@@ -1111,3 +1143,159 @@ window.minecraft.onInstallProgress((data) => {
         data.detail + ' (' + Math.round(data.percent) + '%)'
     );
 });
+
+// Update System
+let updateInfo = null;
+
+// Setup update listeners as early as possible
+window.minecraft.updates.onUpdateAvailable((data) => {
+    updateInfo = data;
+    window.minecraft.logger.info(`Update available: ${data.remoteVersion}`);
+    showUpdateNotification(data);
+});
+
+window.minecraft.updates.onDownloadProgress((data) => {
+    updateDownloadProgress(data.progress);
+});
+
+function showUpdateNotification(updateData) {
+    const notification = document.createElement('div');
+    notification.className = 'update-notification';
+    notification.innerHTML = `
+        <div class="update-notification-content">
+            <div class="update-notification-header">
+                <h3>Update Available</h3>
+                <button class="update-notification-close">✕</button>
+            </div>
+            <div class="update-notification-body">
+                <p>Version ${updateData.remoteVersion} is available.</p>
+                <p>You are currently using version ${updateData.currentVersion}.</p>
+                ${updateData.releaseNotes ? 
+                  `<div class="update-release-notes">${updateData.releaseNotes}</div>` : ''}
+            </div>
+            <div class="update-notification-footer">
+                <button class="update-notification-download">Download & Install</button>
+                <button class="update-notification-later">Later</button>
+            </div>
+        </div>
+    `;
+    
+    document.body.appendChild(notification);
+    
+    notification.querySelector('.update-notification-close').addEventListener('click', () => {
+        notification.remove();
+    });
+    
+    notification.querySelector('.update-notification-later').addEventListener('click', () => {
+        notification.remove();
+    });
+    
+    notification.querySelector('.update-notification-download').addEventListener('click', async () => {
+        notification.remove();
+        await downloadAndInstallUpdate(updateData);
+    });
+}
+
+async function downloadAndInstallUpdate(updateData) {
+    try {
+        // Show progress overlay
+        showProgress(true);
+        updateProgress(0, 'Preparing update download...');
+        
+        // Start download
+        const downloadResult = await window.minecraft.updates.downloadUpdate(updateData);
+        
+        if (downloadResult.error) {
+            throw new Error(downloadResult.error);
+        }
+        
+        updateProgress(100, 'Download complete', 'Preparing to install...');
+        
+        // Install update
+        const installResult = await window.minecraft.updates.installUpdate(downloadResult);
+        
+        if (installResult.error) {
+            throw new Error(installResult.error);
+        }
+        
+        // The app will restart as part of the installation
+    } catch (error) {
+        window.minecraft.logger.error(`Update failed: ${error.message}`);
+        updateProgress(0, 'Update Failed', error.message);
+        setTimeout(() => showProgress(false), 3000);
+    }
+}
+
+function updateDownloadProgress(progress) {
+    updateProgress(progress, 'Downloading Update...', `${progress}% complete`);
+}
+
+// Add check for updates button to settings
+window.addEventListener('DOMContentLoaded', () => {
+    // ...existing code...
+    
+    // Add update channel selector
+    const gameSettingsSection = document.querySelector('.settings-section:nth-of-type(4)');
+    if (gameSettingsSection) {
+        // Update channel selector
+        const updateChannelContainer = document.createElement('div');
+        updateChannelContainer.className = 'setting-item';
+        updateChannelContainer.innerHTML = `
+            <label for="update-channel">Update Channel:</label>
+            <select id="update-channel">
+                <option value="stable">Stable</option>
+                <option value="beta">Beta</option>
+            </select>
+        `;
+        gameSettingsSection.appendChild(updateChannelContainer);
+        
+        // Check for updates button
+        const checkUpdatesContainer = document.createElement('div');
+        checkUpdatesContainer.className = 'setting-item';
+        const checkUpdatesBtn = document.createElement('button');
+        checkUpdatesBtn.className = 'settings-button';
+        checkUpdatesBtn.textContent = 'Check for Updates';
+        checkUpdatesBtn.addEventListener('click', async () => {
+            const channel = document.getElementById('update-channel').value;
+            localStorage.setItem('updateChannel', channel);
+            window.minecraft.logger.info(`Checking for updates in ${channel} channel...`);
+            
+            try {
+                checkUpdatesBtn.disabled = true;
+                checkUpdatesBtn.textContent = 'Checking...';
+                
+                const result = await window.minecraft.updates.checkForUpdates(channel);
+                
+                if (result.error) {
+                    throw new Error(result.error);
+                }
+                
+                if (result.updateAvailable) {
+                    updateInfo = result;
+                    showUpdateNotification(result);
+                    checkUpdatesBtn.textContent = 'Update Available';
+                } else {
+                    checkUpdatesBtn.textContent = 'Up to Date';
+                    window.minecraft.logger.info('No updates available');
+                }
+            } catch (error) {
+                window.minecraft.logger.error(`Update check failed: ${error.message}`);
+                checkUpdatesBtn.textContent = 'Check Failed';
+            } finally {
+                setTimeout(() => {
+                    checkUpdatesBtn.disabled = false;
+                    checkUpdatesBtn.textContent = 'Check for Updates';
+                }, 3000);
+            }
+        });
+        
+        checkUpdatesContainer.appendChild(checkUpdatesBtn);
+        gameSettingsSection.appendChild(checkUpdatesContainer);
+        
+        // Load saved update channel preference
+        const savedChannel = localStorage.getItem('updateChannel') || 'stable';
+        document.getElementById('update-channel').value = savedChannel;
+    }
+});
+
+// ...existing code...

@@ -1,0 +1,99 @@
+.update-notification {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    width: 350px;
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    z-index: 1000;
+    overflow: hidden;
+    animation: slideIn 0.3s ease-out;
+}
+
+.update-notification-content {
+    padding: 15px;
+}
+
+.update-notification-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+}
+
+.update-notification-header h3 {
+    margin: 0;
+    color: var(--text-color);
+    font-size: 18px;
+}
+
+.update-notification-close {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 18px;
+    padding: 0;
+}
+
+.update-notification-body {
+    margin-bottom: 15px;
+}
+
+.update-release-notes {
+    max-height: 150px;
+    overflow-y: auto;
+    padding: 10px;
+    background: rgba(0, 0, 0, 0.05);
+    border-radius: 4px;
+    margin-top: 10px;
+    font-size: 14px;
+    white-space: pre-line;
+}
+
+.update-notification-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+}
+
+.update-notification-download {
+    background: var(--primary-color);
+    color: white;
+    border: none;
+    padding: 8px 16px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: 500;
+    transition: background 0.2s;
+}
+
+.update-notification-download:hover {
+    background: var(--primary-color-dark);
+}
+
+.update-notification-later {
+    background: transparent;
+    border: 1px solid var(--border-color);
+    padding: 8px 16px;
+    border-radius: 4px;
+    cursor: pointer;
+    color: var(--text-color);
+}
+
+.update-notification-later:hover {
+    background: rgba(0, 0, 0, 0.05);
+}
+
+@keyframes slideIn {
+    from {
+        transform: translateX(100%);
+        opacity: 0;
+    }
+    to {
+        transform: translateX(0);
+        opacity: 1;
+    }
+}

@@ -7,6 +7,7 @@
     <title>AlrightLauncher</title>
     <link rel="stylesheet" href="../styles/styles.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700&family=Poppins:wght@400;600;700&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="../styles/updates.css">
     <style>
         .settings-modal {
             display: none;
@@ -38,6 +39,7 @@
         <div>
             <h1>Yet<br>Another<br>Minecraft<br>Launcher</h1>
             <h3>Based on Javascript (Sadly)</h3>
+            <h4>Version 3.0.1</h4>
         </div>
         <!-- <h3>Standalone.</h3> -->
         <h3 id="username" contenteditable="true" spellcheck="false">Player</h3>
@@ -70,145 +72,165 @@
                 <button class="settings-close">✕</button>
             </div>
 
-            <div class="settings-section">
-                <h3>Memory Settings</h3>
-                <div class="setting-item">
-                    <label>Maximum RAM: <span id="ram-value">2048</span> MB</label>
-                    <input type="range" class="memory-slider" min="1024" max="16384" step="512" value="2048" id="ram-slider">
-                </div>
+            <!-- Add tabs navigation -->
+            <div class="settings-tabs">
+                <button class="settings-tab active" data-tab="game-settings">Game Settings</button>
+                <button class="settings-tab" data-tab="launcher-settings">Launcher Settings</button>
+                <button class="settings-tab" data-tab="server-settings">Server Settings</button>
+                <button class="settings-tab" data-tab="advanced-settings">Advanced Settings</button>
             </div>
 
-            <div class="server-creator">
-                <h3>Local Server</h3>
-                <div class="server-status-panel">
-                    <div class="server-list" id="serverList">
-                        <!-- Servers will be listed here dynamically -->
-                    </div>
-                    <div class="server-logs" id="serverLogs">
-                        <div class="log-header">
-                            <h4>Server Logs</h4>
-                            <button class="clear-logs">Clear</button>
-                        </div>
-                        <pre class="log-content" id="serverLogContent"></pre>
+            <!-- Game Settings Tab -->
+            <div id="game-settings" class="tab-content active">
+                <div class="settings-section">
+                    <h3>Memory Settings</h3>
+                    <div class="setting-item">
+                        <label>Maximum RAM: <span id="ram-value">2048</span> MB</label>
+                        <input type="range" class="memory-slider" min="1024" max="16384" step="512" value="2048" id="ram-slider">
                     </div>
                 </div>
-                <div class="server-config">
-                    <h4>Server Configuration</h4>
-                    <form class="server-form" id="serverForm">
-                        <input type="text" placeholder="Server Name" id="serverName" required>
-                        <input type="number" placeholder="Port (default: 25565)" id="serverPort" value="25565">
-                        <select id="serverVersion" required>
-                            <!-- Versions loaded dynamically -->
-                        </select>
-                        <div class="server-settings">
-                            <div class="setting-group">
-                                <label>Server Memory (MB)</label>
-                                <input type="number" id="serverMemory" value="2048" min="512" step="512">
-                            </div>
-                            <div class="setting-group">
-                                <label>Max Players</label>
-                                <input type="number" id="maxPlayers" value="20" min="1">
-                            </div>
-                            <div class="setting-group">
-                                <label>View Distance</label>
-                                <input type="number" id="viewDistance" value="10" min="3" max="32">
-                            </div>
-                            <div class="setting-group">
-                                <label>Difficulty</label>
-                                <select id="difficulty">
-                                    <option value="peaceful">Peaceful</option>
-                                    <option value="easy">Easy</option>
-                                    <option value="normal" selected>Normal</option>
-                                    <option value="hard">Hard</option>
-                                </select>
-                            </div>
-                            <div class="setting-group">
-                                <label>Game Mode</label>
-                                <select id="gamemode">
-                                    <option value="survival" selected>Survival</option>
-                                    <option value="creative">Creative</option>
-                                    <option value="adventure">Adventure</option>
-                                </select>
-                            </div>
-                            <div class="setting-checks">
-                                <label>
-                                    <input type="checkbox" id="pvp" checked>
-                                    Enable PvP
-                                </label>
-                                <label>
-                                    <input type="checkbox" id="spawnAnimals" checked>
-                                    Spawn Animals
-                                </label>
-                                <label>
-                                    <input type="checkbox" id="spawnMonsters" checked>
-                                    Spawn Monsters
-                                </label>
-                            </div>
+                <div class="settings-section">
+                    <h3>Game Settings</h3>
+                    <div class="setting-item">
+                        <label>Full Screen</label>
+                        <label class="theme-switch">
+                            <input type="checkbox" id="fullscreen-toggle">
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+                    <div class="setting-item">
+                        <label>Offline Mode</label>
+                        <label class="theme-switch">
+                            <input type="checkbox" id="offline-toggle">
+                            <span class="slider"></span>
+                        </label>
+                        <p class="setting-description">Launch games without connecting to Minecraft servers</p>
+                    </div>
+                    <div class="setting-item">
+                        <label>Skip File Verification</label>
+                        <label class="theme-switch">
+                            <input type="checkbox" id="skip-verification-toggle">
+                            <span class="slider"></span>
+                        </label>
+                        <p class="setting-description">Skip file integrity checks when launching offline (not recommended)</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Launcher Settings Tab -->
+            <div id="launcher-settings" class="tab-content">
+                
+                <div class="settings-section">
+                    <h3>Appearance</h3>
+                    <div class="setting-item">
+                        <label>Dark Mode</label>
+                        <label class="theme-switch">
+                            <input type="checkbox" id="theme-toggle">
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Server Settings Tab -->
+            <div id="server-settings" class="tab-content">
+                <div class="server-creator">
+                    <h3>Local Server</h3>
+                    <div class="server-status-panel">
+                        <div class="server-list" id="serverList">
+                            <!-- Servers will be listed here dynamically -->
                         </div>
-                        <button type="submit" class="settings-button">Create Server</button>
-                    </form>
+                        <div class="server-logs" id="serverLogs">
+                            <div class="log-header">
+                                <h4>Server Logs</h4>
+                                <button class="clear-logs">Clear</button>
+                            </div>
+                            <pre class="log-content" id="serverLogContent"></pre>
+                        </div>
+                    </div>
+                    <div class="server-config">
+                        <h4>Server Configuration</h4>
+                        <form class="server-form" id="serverForm">
+                            <input type="text" placeholder="Server Name" id="serverName" required>
+                            <input type="number" placeholder="Port (default: 25565)" id="serverPort" value="25565">
+                            <select id="serverVersion" required>
+                                <!-- Versions loaded dynamically -->
+                            </select>
+                            <div class="server-settings">
+                                <div class="setting-group">
+                                    <label>Server Memory (MB)</label>
+                                    <input type="number" id="serverMemory" value="2048" min="512" step="512">
+                                </div>
+                                <div class="setting-group">
+                                    <label>Max Players</label>
+                                    <input type="number" id="maxPlayers" value="20" min="1">
+                                </div>
+                                <div class="setting-group">
+                                    <label>View Distance</label>
+                                    <input type="number" id="viewDistance" value="10" min="3" max="32">
+                                </div>
+                                <div class="setting-group">
+                                    <label>Difficulty</label>
+                                    <select id="difficulty">
+                                        <option value="peaceful">Peaceful</option>
+                                        <option value="easy">Easy</option>
+                                        <option value="normal" selected>Normal</option>
+                                        <option value="hard">Hard</option>
+                                    </select>
+                                </div>
+                                <div class="setting-group">
+                                    <label>Game Mode</label>
+                                    <select id="gamemode">
+                                        <option value="survival" selected>Survival</option>
+                                        <option value="creative">Creative</option>
+                                        <option value="adventure">Adventure</option>
+                                    </select>
+                                </div>
+                                <div class="setting-checks">
+                                    <label>
+                                        <input type="checkbox" id="pvp" checked>
+                                        Enable PvP
+                                    </label>
+                                    <label>
+                                        <input type="checkbox" id="spawnAnimals" checked>
+                                        Spawn Animals
+                                    </label>
+                                    <label>
+                                        <input type="checkbox" id="spawnMonsters" checked>
+                                        Spawn Monsters
+                                    </label>
+                                </div>
+                            </div>
+                            <button type="submit" class="settings-button">Create Server</button>
+                        </form>
+                    </div>
                 </div>
             </div>
 
-            <div class="modloader-section">
-                <h3>Mod Loaders</h3>
-                <div class="modloader-card" id="forge">
-                    <h4>Forge</h4>
-                    <p>Traditional modding platform</p>
+            <!-- Advanced Settings Tab -->
+            <div id="advanced-settings" class="tab-content">
+                <div class="modloader-section">
+                    <h3>Mod Loaders</h3>
+                    <div class="modloader-card" id="forge">
+                        <h4>Forge</h4>
+                        <p>Traditional modding platform</p>
+                    </div>
+                    <div class="modloader-card" id="fabric">
+                        <h4>Fabric</h4>
+                        <p>Lightweight modern modding</p>
+                    </div>
                 </div>
-                <div class="modloader-card" id="fabric">
-                    <h4>Fabric</h4>
-                    <p>Lightweight modern modding</p>
-                </div>
-            </div>
 
-            <div class="settings-section">
-                <h3>Appearance</h3>
-                <div class="setting-item">
-                    <label>Dark Mode</label>
-                    <label class="theme-switch">
-                        <input type="checkbox" id="theme-toggle">
-                        <span class="slider"></span>
-                    </label>
-                </div>
-            </div>
-
-            <div class="settings-section">
-                <h3>Game Settings</h3>
-                <div class="setting-item">
-                    <label>Full Screen</label>
-                    <label class="theme-switch">
-                        <input type="checkbox" id="fullscreen-toggle">
-                        <span class="slider"></span>
-                    </label>
-                </div>
-                <div class="setting-item">
-                    <label>Offline Mode</label>
-                    <label class="theme-switch">
-                        <input type="checkbox" id="offline-toggle">
-                        <span class="slider"></span>
-                    </label>
-                    <p class="setting-description">Launch games without connecting to Minecraft servers</p>
-                </div>
-                <div class="setting-item">
-                    <label>Skip File Verification</label>
-                    <label class="theme-switch">
-                        <input type="checkbox" id="skip-verification-toggle">
-                        <span class="slider"></span>
-                    </label>
-                    <p class="setting-description">Skip file integrity checks when launching offline (not recommended)</p>
-                </div>
-            </div>
-
-            <div class="settings-section">
-                <h3>Portable Version</h3>
-                <div class="setting-item">
-                    <button id="createStandalone" class="settings-button">
-                        Create Standalone USB Media
-                    </button>
-                    <p class="setting-description">
-                        Creates a portable version with selected game version and Java runtime
-                    </p>
+                <div class="settings-section">
+                    <h3>Portable Version</h3>
+                    <div class="setting-item">
+                        <button id="createStandalone" class="settings-button">
+                            Create Standalone USB Media
+                        </button>
+                        <p class="setting-description">
+                            Creates a portable version with selected game version and Java runtime
+                        </p>
+                    </div>
                 </div>
             </div>
         </div>

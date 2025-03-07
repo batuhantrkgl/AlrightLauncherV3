@@ -8,6 +8,7 @@ const { checkIcon } = require('./iconTest');
 const ServerManager = require('./server-manager');
 const MockAuthServer = require('./mock-auth-server');
 const FileManager = require('./fileManager');
+const UpdateService = require('./update-service');
 const logger = require('./logger');
 
 // Add this helper function at the top level
@@ -71,6 +72,7 @@ let minecraftLauncher = null;
 let serverManager = null;
 let mockAuthServer = null;
 let fileManager = null;
+let updateService = null;
 
 function registerIpcHandlers() {
     // Clear existing handlers first
@@ -415,6 +417,43 @@ function registerIpcHandlers() {
         }
     });
 
+    // Add update handlers
+    ipcMain.handle('check-for-updates', async (event, channel) => {
+        try {
+            if (!updateService) {
+                updateService = new UpdateService();
+            }
+            return await updateService.checkForUpdates(channel);
+        } catch (error) {
+            console.error('Error checking for updates:', error);
+            return { error: error.message };
+        }
+    });
+
+    ipcMain.handle('download-update', async (event, updateInfo) => {
+        try {
+            if (!updateService) {
+                updateService = new UpdateService();
+            }
+            return await updateService.downloadUpdate(updateInfo);
+        } catch (error) {
+            console.error('Error downloading update:', error);
+            return { error: error.message };
+        }
+    });
+
+    ipcMain.handle('install-update', async (event, updateInfo) => {
+        try {
+            if (!updateService) {
+                updateService = new UpdateService();
+            }
+            return await updateService.installUpdate(updateInfo);
+        } catch (error) {
+            console.error('Error installing update:', error);
+            return { error: error.message };
+        }
+    });
+
     // Remove authentication-related handlers
 }
 
@@ -526,6 +565,7 @@ async function createWindow() {
 app.whenReady().then(async () => {
     await ensureDirectories();
     createWindow();
+    initializeUpdateService();
 });
 
 app.on('activate', () => {
@@ -616,3 +656,27 @@ ipcMain.handle('fetch-versions', async () => {
         throw error;
     }
 });
+
+// Initialize update service and check for updates on app start
+async function initializeUpdateService() {
+    updateService = new UpdateService();
+    
+    // Check for updates in the background after a short delay
+    setTimeout(async () => {
+        try {
+            // Get update channel preference from settings
+            const updateChannel = global.settings?.updateChannel || 'stable';
+            const result = await updateService.checkForUpdates(updateChannel);
+            
+            // If update is available, notify the main window
+            if (result.updateAvailable) {
+                const mainWindow = BrowserWindow.getAllWindows()[0];
+                if (mainWindow && !mainWindow.isDestroyed()) {
+                    mainWindow.webContents.send('update-available', result);
+                }
+            }
+        } catch (error) {
+            logger.error('Background update check failed:', error.message);
+        }
+    }, 5000);
+}

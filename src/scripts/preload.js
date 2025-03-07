@@ -111,6 +111,22 @@ contextBridge.exposeInMainWorld('minecraft', {
         getInstalledVersions: () => safeIpcInvoke('get-installed-versions'),
         verifyFiles: (version) => safeIpcInvoke('verify-game-files', version),
         getFileStatus: (version) => safeIpcInvoke('get-file-status', version)
+    },
+    // Expose update functionality
+    updates: {
+        checkForUpdates: (channel) => safeIpcInvoke('check-for-updates', channel),
+        downloadUpdate: (updateInfo) => safeIpcInvoke('download-update', updateInfo),
+        installUpdate: (updateInfo) => safeIpcInvoke('install-update', updateInfo),
+        onUpdateAvailable: (callback) => {
+            if (typeof callback === 'function') {
+                ipcRenderer.on('update-available', (_, data) => callback(data));
+            }
+        },
+        onDownloadProgress: (callback) => {
+            if (typeof callback === 'function') {
+                ipcRenderer.on('update-download-progress', (_, data) => callback(data));
+            }
+        }
     }
 });
 
