@@ -633,7 +633,7 @@ class MinecraftLauncher {
         const extractedFiles = [];
         const osName = this.getOSName();
         
-        // These are the specific libraries we need to extract for 1.20
+        // These are the specific libraries we need to extract for 1.20/1.21
         const nativeLibraries = [
             'lwjgl', 'lwjgl-jemalloc', 'lwjgl-openal', 'lwjgl-opengl', 'lwjgl-glfw', 
             'lwjgl-stb', 'lwjgl-tinyfd'
@@ -642,107 +642,119 @@ class MinecraftLauncher {
         let nativeCount = 0;
         let extractedCount = 0;
         
-        // First pass - find all native libraries for Windows
+        logger.info(`Current OS: ${osName}`);
+        
+        // First pass - find all native libraries for the current OS
         for (const library of versionJson.libraries) {
             // Skip libraries without name or downloads
             if (!library.name || !library.downloads) continue;
             
-            // Only look at specific native libraries
-            const artifactName = library.name.split(':')[1];
-            if (!nativeLibraries.includes(artifactName)) continue;
+            // Parse the library name to get the artifact name
+            const nameParts = library.name.split(':');
+            if (nameParts.length < 2) continue;
             
-            // Look for native classifiers - these are the important keys for Windows
-            if (!library.downloads.classifiers) continue;
+            const artifactName = nameParts[1];
             
-            // Windows native keys to check in order
-            const windowsKeys = [
-                'natives-windows',
-                'natives-windows-x86_64',
-                'natives-windows-arm64',
-                'natives-windows-x86'
+            // Check if this is a native library we're interested in
+            const isNativeLibrary = nativeLibraries.includes(artifactName);
+            const hasClassifiers = library.downloads?.classifiers;
+            
+            if (!isNativeLibrary || !hasClassifiers) continue;
+            
+            logger.info(`Found LWJGL library: ${library.name}`);
+            
+            // Windows native keys to check in order of preference
+            const nativeKeys = [
+                `natives-${osName}`,
+                `natives-${osName}-x86_64`,
+                `natives-${osName}-arm64`,
+                `natives-${osName}-x86` 
             ];
             
-            // Find the first matching Windows native
-            let nativeKey = null;
-            let nativeData = null;
+            // Find the appropriate native classifier
+            let nativeArtifact = null;
+            let usedKey = null;
             
-            for (const key of windowsKeys) {
+            for (const key of nativeKeys) {
                 if (library.downloads.classifiers[key]) {
-                    nativeKey = key;
-                    nativeData = library.downloads.classifiers[key];
+                    nativeArtifact = library.downloads.classifiers[key];
+                    usedKey = key;
                     break;
                 }
             }
             
-            // Skip if no Windows native found
-            if (!nativeKey || !nativeData) continue;
+            if (!nativeArtifact) continue;
             
             nativeCount++;
-            logger.info(`Found native library: ${library.name} (${nativeKey})`);
             
-            // Get the library path and download if necessary
-            const libraryPath = path.join(this.baseDir, 'libraries', nativeData.path);
-            
+            // Download or extract the native library
             try {
-                // Ensure library exists
+                const libraryPath = path.join(this.baseDir, 'libraries', nativeArtifact.path);
+                
+                // Download the library if it doesn't exist
                 if (!await fs.pathExists(libraryPath)) {
-                    logger.info(`Downloading native library: ${nativeData.url}`);
+                    logger.info(`Downloading native library: ${nativeArtifact.url}`);
                     await fs.ensureDir(path.dirname(libraryPath));
                     
-                    // Download the native library
-                    const response = await fetch(nativeData.url);
-                    if (!response.ok) throw new Error(`Download failed: ${response.status}`);
-                    
-                    const buffer = await response.arrayBuffer();
-                    await fs.writeFile(libraryPath, Buffer.from(buffer));
-                    logger.info(`Downloaded native library to ${libraryPath}`);
+                    try {
+                        const response = await fetch(nativeArtifact.url);
+                        if (!response.ok) {
+                            throw new Error(`Failed to download: HTTP ${response.status}`);
+                        }
+                        
+                        const buffer = await response.arrayBuffer();
+                        await fs.writeFile(libraryPath, Buffer.from(buffer));
+                        logger.info(`Downloaded native library to ${libraryPath}`);
+                    } catch (downloadError) {
+                        logger.error(`Download failed for ${nativeArtifact.url}: ${downloadError.message}`);
+                        continue;
+                    }
                 }
                 
-                // Extract DLL files from native JAR
+                // Extract the DLL files
+                logger.info(`Processing native: ${library.name} (${usedKey})`);
+                
                 try {
-                    logger.info(`Extracting from ${libraryPath}`);
                     const zip = new AdmZip(libraryPath);
                     const entries = zip.getEntries();
                     
-                    // Count DLLs before extraction
+                    // Find and extract all DLL files
                     const dllEntries = entries.filter(entry => 
                         entry.entryName.endsWith('.dll') && 
-                        !entry.entryName.includes('META-INF/'));
+                        !entry.entryName.includes('META-INF/')
+                    );
                     
-                    if (dllEntries.length === 0) {
-                        logger.warn(`No DLLs found in ${libraryPath}`);
-                    }
-                    
-                    // Extract all DLL files
                     for (const entry of dllEntries) {
                         const fileName = path.basename(entry.entryName);
-                        logger.info(`Extracting DLL: ${fileName}`);
-                        
+                        logger.info(`Extracting: ${fileName}`);
                         zip.extractEntryTo(entry, nativesDir, false, true);
                         extractedFiles.push(fileName);
                         extractedCount++;
                     }
-                } catch (zipError) {
-                    logger.error(`Failed to extract from ${libraryPath}: ${zipError.message}`);
+                } catch (extractError) {
+                    logger.error(`Failed to extract from ${libraryPath}: ${extractError.message}`);
                 }
             } catch (error) {
                 logger.error(`Error processing ${library.name}: ${error.message}`);
             }
         }
         
-        // Verify extraction results
-        logger.info(`Found ${nativeCount} native libraries for Windows`);
-        logger.info(`Extracted ${extractedCount} DLL files: ${extractedFiles.join(', ')}`);
+        logger.info(`Found ${nativeCount} native libraries and ${extractedCount} DLL files`);
+        logger.info(`Extracted files: ${extractedFiles.join(', ')}`);
         
-        // Final verification
+        // If no files were extracted, try the fallback method
         if (extractedFiles.length === 0) {
+            logger.warn('No natives extracted, attempting fallback method');
+            
+            // Implementation of fallback method as in original extract120Natives
+            // ...existing fallback code...
+            
             // Fallback extraction method - try extracting all JAR files with "native" in the name
-            logger.warn('Primary extraction failed, trying fallback method');
             const libDir = path.join(this.baseDir, 'libraries');
             
             try {
                 // Directly search for Windows native JARs
-                const windowsNativePattern = '-natives-windows';
+                const windowsNativePattern = `-natives-${osName}`;
                 const nativeJars = [];
                 
                 // Search for org/lwjgl directory
@@ -799,8 +811,6 @@ class MinecraftLauncher {
                         logger.error(`Fallback extraction failed for ${jarPath}: ${error.message}`);
                     }
                 }
-                
-                logger.info(`Fallback extraction completed with ${extractedFiles.length} files`);
             } catch (fallbackError) {
                 logger.error(`Fallback extraction failed: ${fallbackError.message}`);
             }

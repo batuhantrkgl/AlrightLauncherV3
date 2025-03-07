@@ -235,7 +235,28 @@ class MinecraftInstaller {
         await fs.ensureDir(nativesDir);
         await fs.emptyDir(nativesDir);
 
-        // Updated natives list to match 1.16.5's structure
+        // Handle modern Minecraft versions (1.20 and 1.21)
+        if (versionData.id === '1.20' || versionData.id === '1.21') {
+            logger.info(`Detected modern Minecraft ${versionData.id}, using specialized native extraction`);
+            try {
+                // Use the launcher's specialized extraction method for 1.20/1.21
+                const launcher = new (require('./minecraft-launcher'))(this.baseDir);
+                const extractedFiles = await launcher.extract120Natives(versionData.id, nativesDir);
+                
+                if (extractedFiles.length === 0) {
+                    throw new Error('No natives were extracted');
+                }
+                
+                logger.info(`Successfully extracted modern natives for ${versionData.id}: ${extractedFiles.join(', ')}`);
+                return true;
+            } catch (error) {
+                logger.error(`Failed to extract modern natives: ${error.message}`);
+                throw error;
+            }
+        }
+
+        // Continue with regular native extraction for older versions
+        // Updated natives list to match newer Minecraft structure
         const requiredNatives = [
             'lwjgl.dll',
             'lwjgl32.dll',
@@ -255,7 +276,7 @@ class MinecraftInstaller {
         ];
 
         const extractedNatives = new Map();
-        const processedNatives = new Set(); // Add this line to define processedNatives
+        const processedNatives = new Set();
 
         for (const lib of versionData.libraries) {
             if (!this.isLibraryCompatible(lib)) continue;
