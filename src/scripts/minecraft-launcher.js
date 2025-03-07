@@ -868,6 +868,9 @@ class MinecraftLauncher {
                 throw new Error(`Required Java version (${requiredJavaVersion}) not found`);
             }
 
+            // Determine if this is an old version (pre-1.8) that needs special handling
+            const isOldVersion = this.isOldMinecraftVersion(version);
+            
             // Set up basic arguments map
             const argMap = {
                 auth_player_name: username,
@@ -882,7 +885,9 @@ class MinecraftLauncher {
                 natives_directory: path.join(versionDir, 'natives'),
                 launcher_name: 'alright-launcher',
                 launcher_version: '3.0',
-                classpath: this.getLibrariesClasspath(version)
+                classpath: this.getLibrariesClasspath(version),
+                // For older versions, use empty JSON object for user properties
+                user_properties: isOldVersion ? '{}' : '[]'
             };
 
             // Default JVM arguments
@@ -992,9 +997,21 @@ class MinecraftLauncher {
         }
     }
 
+    // Add helper method to detect old Minecraft versions
+    isOldMinecraftVersion(version) {
+        // Convert version to numeric for comparison
+        if (version.startsWith('1.')) {
+            const minorVersion = parseInt(version.split('.')[1], 10);
+            // Versions before 1.8 need special handling
+            return minorVersion < 8;
+        }
+        return false;
+    }
+
     processArgument(arg, values) {
         return arg.replace(/\${([^}]+)}/g, (match, key) => {
-            return values[key] || match;
+            // Return the value if it exists, otherwise keep the original placeholder
+            return values[key] !== undefined ? values[key] : match;
         });
     }
 
