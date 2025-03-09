@@ -5,6 +5,9 @@ const logger = require('./logger');
 const MinecraftInstaller = require('./minecraft-installer');
 const extract = require('extract-zip'); // Add this import
 const AdmZip = require('adm-zip'); // Add this import
+const glob = require('glob'); // Add glob package import
+const { promisify } = require('util'); // Add promisify import
+const globPromise = promisify(glob.glob); // Create promisified version of glob.glob function
 
 class MinecraftLauncher {
     constructor(baseDir) {
@@ -272,6 +275,58 @@ class MinecraftLauncher {
         return classpath.join(path.delimiter);
     }
 
+    // Add the missing buildClasspath method
+    async buildClasspath(versionJson, version) {
+        // We can use the existing getLibrariesClasspath method since it already has the correct logic
+        return this.getLibrariesClasspath(version);
+    }
+
+    // Add methods to build JVM and game arguments
+    buildJvmArgs(versionJson, options) {
+        const { classpath, nativesDir, gameDir, assetsDir, version } = options;
+        const args = [];
+
+        // Add memory settings
+        args.push('-Xmx2G'); // Default to 2GB max memory
+        args.push('-XX:+UnlockExperimentalVMOptions');
+        args.push('-XX:+UseG1GC');
+        args.push('-XX:G1NewSizePercent=20');
+        args.push('-XX:G1ReservePercent=20');
+        args.push('-XX:MaxGCPauseMillis=50');
+        args.push('-XX:G1HeapRegionSize=32M');
+
+        // Add system properties for natives and other settings
+        args.push(`-Djava.library.path=${nativesDir}`);
+        args.push(`-Dminecraft.launcher.brand=AlrightLauncher`);
+        args.push(`-Dminecraft.launcher.version=3.0`);
+        args.push('-Dlog4j2.formatMsgNoLookups=true'); // Log4j vulnerability mitigation
+
+        // Add classpath
+        args.push('-cp');
+        args.push(classpath);
+
+        return args;
+    }
+
+    buildGameArgs(versionJson, options) {
+        const { username, version, gameDir, assetsDir } = options;
+        const args = [];
+        const uuid = this.generateUUID();
+
+        // Basic game arguments present in all versions
+        args.push('--username', username);
+        args.push('--version', version);
+        args.push('--gameDir', gameDir);
+        args.push('--assetsDir', assetsDir);
+        args.push('--assetIndex', versionJson.assetIndex.id);
+        args.push('--uuid', uuid);
+        args.push('--accessToken', 'offline');
+        args.push('--userType', 'mojang');
+        args.push('--versionType', 'release');
+
+        return args;
+    }
+
     isLibraryCompatible(library) {
         if (!library.rules) return true;
         
@@ -499,48 +554,75 @@ class MinecraftLauncher {
         return this.isVersionNewerOrEqual(version, '1.19');
     }
 
-    async extractModernNatives(version, versionJson, nativesDir) {
-        logger.info(`Setting up modern natives for ${version} in ${nativesDir}...`);
+    async extractModernNatives(version, versionJson, nativesDir, lwjglVersion = null) {
+        logger.info(`Setting up modern natives for ${version} in ${nativesDir}`);
         
         try {
             // Ensure natives directory exists and is empty
             await fs.ensureDir(nativesDir);
             await fs.emptyDir(nativesDir);
 
-            // Special handling for 1.19.x
-            const is119Version = version === '1.19' || version.startsWith('1.19.');
+            // If no specific LWJGL version was provided, detect it
+            if (!lwjglVersion) {
+                lwjglVersion = this.detectLwjglVersion(versionJson);
+            }
             
-            // Track extracted natives to avoid duplicates
+            logger.info(`Using LWJGL version ${lwjglVersion} for natives extraction`);
+            
+            // Track extracted natives and their sources
             const extractedFiles = new Set();
             const nativesMap = new Map();
-
-            logger.info(`Scanning libraries for natives (${is119Version ? '1.19.x mode' : 'standard mode'})`);
             
             // First pass - collect all native libraries
             for (const lib of versionJson.libraries) {
                 if (!this.isLibraryCompatible(lib)) continue;
-
-                // Get native keys for Windows - handle 1.19.x specifically
+                
+                // Only include libraries with potential native components
+                if (!lib.downloads?.classifiers && !lib.natives) continue;
+                
+                // Get native keys for Windows with arch variants
                 const possibleNativeKeys = [
                     'natives-windows',
                     'natives-windows-x86_64',
                     'natives-windows-64',
-                    'natives-windows-arm64', // Add ARM64 support
-                    lib.natives?.windows?.replace('${arch}', '64')
+                    'natives-windows-arm64',
+                    lib.natives?.windows?.replace('${arch}', process.arch === 'x64' ? '64' : '32')
                 ].filter(Boolean);
-
+                
                 for (const nativeKey of possibleNativeKeys) {
                     let nativePath = null;
-                    let nativeData = null;
-
-                    // Try both download formats
+                    
+                    // Try the standard format first
                     if (lib.downloads?.classifiers?.[nativeKey]) {
-                        nativeData = lib.downloads.classifiers[nativeKey];
-                        nativePath = path.join(this.librariesDir, nativeData.path);
-                    } else if (lib.name) {
-                        // Fallback to constructing path from name
+                        const nativeArtifact = lib.downloads.classifiers[nativeKey];
+                        nativePath = path.join(this.librariesDir, nativeArtifact.path);
+                        
+                        if (fs.existsSync(nativePath)) {
+                            logger.info(`Found native: ${lib.name} at ${nativePath}`);
+                            
+                            // For LWJGL libraries, only use matching version
+                            if (lib.name.startsWith('org.lwjgl')) {
+                                // For libraries with versions in the name
+                                const nameParts = lib.name.split(':');
+                                if (nameParts.length >= 3 && nameParts[2] === lwjglVersion) {
+                                    nativesMap.set(lib.name, nativePath);
+                                    break;
+                                }
+                                // Skip if version doesn't match
+                                logger.info(`Skipping non-matching LWJGL version: ${lib.name}`);
+                            } else {
+                                // For non-LWJGL libs, just include them
+                                nativesMap.set(lib.name, nativePath);
+                                break;
+                            }
+                        }
+                    } 
+                    // Try legacy format as fallback
+                    else if (lib.name) {
                         const [group, artifact, version] = lib.name.split(':');
-                        const nativeSuffix = nativeKey.replace('${arch}', '64');
+                        if (!group || !artifact || !version) continue;
+                        
+                        const nativeSuffix = nativeKey.replace('${arch}', process.arch === 'x64' ? '64' : '32');
                         nativePath = path.join(
                             this.librariesDir,
                             group.replace(/\./g, '/'),
@@ -548,155 +630,73 @@ class MinecraftLauncher {
                             version,
                             `${artifact}-${version}-${nativeSuffix}.jar`
                         );
-                    }
-
-                    if (nativePath && fs.existsSync(nativePath)) {
-                        logger.info(`Found native: ${lib.name} at ${nativePath}`);
-                        nativesMap.set(lib.name, nativePath);
-                        break; // Break after finding a valid native path
-                    }
-                }
-            }
-
-            // Extract all found natives
-            if (is119Version) {
-                logger.info(`Found ${nativesMap.size} native libraries for Minecraft ${version}`);
-            }
-
-            // For 1.19.x, ensure we've found all required LWJGL libraries
-            if (is119Version && nativesMap.size === 0) {
-                logger.info('No natives found in standard path for 1.19.x, searching in alternate locations');
-                
-                // Search for LWJGL libraries in org/lwjgl paths
-                const lwjglPaths = [
-                    path.join(this.librariesDir, 'org', 'lwjgl'),
-                    path.join(this.librariesDir, 'org', 'lwjgl3')
-                ];
-                
-                for (const lwjglPath of lwjglPaths) {
-                    if (!fs.existsSync(lwjglPath)) continue;
-                    
-                    const subdirs = fs.readdirSync(lwjglPath);
-                    for (const subdir of subdirs) {
-                        const fullSubdir = path.join(lwjglPath, subdir);
-                        if (!fs.statSync(fullSubdir).isDirectory()) continue;
                         
-                        // Look for version directories
-                        const versionDirs = fs.readdirSync(fullSubdir);
-                        for (const versionDir of versionDirs) {
-                            const fullVersionDir = path.join(fullSubdir, versionDir);
-                            if (!fs.statSync(fullVersionDir).isDirectory()) continue;
-                            
-                            // Look for native JARs
-                            const files = fs.readdirSync(fullVersionDir);
-                            const nativeJars = files.filter(f => 
-                                f.endsWith('.jar') && 
-                                f.includes('natives-windows')
-                            );
-                            
-                            for (const jar of nativeJars) {
-                                const jarPath = path.join(fullVersionDir, jar);
-                                logger.info(`Found native JAR via alternate path: ${jarPath}`);
-                                nativesMap.set(`manual:${jar}`, jarPath);
+                        if (fs.existsSync(nativePath)) {
+                            // Only include matching LWJGL versions
+                            if (lib.name.startsWith('org.lwjgl') && version !== lwjglVersion) {
+                                logger.info(`Skipping mismatched LWJGL library ${lib.name} (${version} ≠ ${lwjglVersion})`);
+                                continue;
                             }
+                            
+                            logger.info(`Found legacy native: ${lib.name} at ${nativePath}`);
+                            nativesMap.set(lib.name, nativePath);
+                            break;
                         }
                     }
                 }
-                
-                logger.info(`Alternate path search found ${nativesMap.size} additional native JARs`);
             }
             
-            // Specific lookup for common LWJGL libraries for 1.19.1
-            if (is119Version && (version === '1.19.1' || version === '1.19')) {
-                const specificLwjglLibs = [
-                    'lwjgl',
-                    'lwjgl-opengl',
-                    'lwjgl-openal',
-                    'lwjgl-jemalloc',
-                    'lwjgl-glfw',
-                    'lwjgl-stb',
-                    'lwjgl-tinyfd'
-                ];
-                
-                logger.info('Performing specific lookup for 1.19.1 LWJGL libraries');
-                
-                // Expected version for 1.19.1
-                const lwjglVersion = '3.3.1';
-                
-                for (const libName of specificLwjglLibs) {
-                    const nativePath = path.join(
-                        this.librariesDir,
-                        'org', 'lwjgl',
-                        libName, 
-                        lwjglVersion,
-                        `${libName}-${lwjglVersion}-natives-windows.jar`
-                    );
-                    
-                    if (fs.existsSync(nativePath)) {
-                        logger.info(`Found specific LWJGL library: ${nativePath}`);
-                        nativesMap.set(`org.lwjgl:${libName}:${lwjglVersion}`, nativePath);
-                    } else {
-                        logger.warn(`Missing specific LWJGL library: ${nativePath}`);
-                    }
-                }
+            // Handle special case for 1.20.5
+            if (version === '1.20.5') {
+                await this.ensureLwjgl333Natives(nativesDir, nativesMap, extractedFiles);
             }
-
+            
             // Extract all found natives
+            logger.info(`Found ${nativesMap.size} native libraries for Minecraft ${version}`);
+            
+            // If no natives were found, try harder to find them
+            if (nativesMap.size === 0) {
+                await this.findAndDownloadMissingNatives(lwjglVersion, nativesDir, extractedFiles);
+            }
+            
             let successfulExtracts = 0;
             for (const [libName, nativePath] of nativesMap.entries()) {
-                logger.info(`Extracting native library: ${libName}`);
+                logger.info(`Extracting native library: ${libName} from ${nativePath}`);
                 try {
-                    // Prefer AdmZip for 1.19.x for better extraction success
-                    if (is119Version) {
-                        try {
-                            const zip = new AdmZip(nativePath);
-                            const entries = zip.getEntries();
-                            
-                            // Find all DLL files
-                            const dllEntries = entries.filter(entry => 
-                                entry.entryName.endsWith('.dll') && 
-                                !entry.entryName.includes('META-INF/')
-                            );
-                            
-                            if (dllEntries.length > 0) {
-                                logger.info(`Found ${dllEntries.length} DLLs in ${libName}`);
-                                
-                                // Extract each DLL
-                                for (const entry of dllEntries) {
-                                    const fileName = path.basename(entry.entryName);
-                                    logger.info(`Extracting DLL: ${fileName}`);
-                                    zip.extractEntryTo(entry.entryName, nativesDir, false, true);
-                                    extractedFiles.add(fileName);
-                                    successfulExtracts++;
-                                }
-                            } else {
-                                logger.warn(`No DLLs found in ${libName}`);
-                            }
-                        } catch (zipError) {
-                            logger.error(`AdmZip extraction failed for ${libName}, falling back to extract-zip: ${zipError.message}`);
-                            // Fall back to extract-zip if AdmZip fails
-                            await extract(nativePath, {
-                                dir: nativesDir,
-                                onEntry: (entry) => {
-                                    const fileName = path.basename(entry.fileName).toLowerCase();
-                                    if (fileName.endsWith('.dll') && !extractedFiles.has(fileName)) {
-                                        logger.info(`Extracting: ${fileName}`);
-                                        extractedFiles.add(fileName);
-                                        successfulExtracts++;
-                                        return true;
-                                    }
-                                    return false;
-                                }
-                            });
+                    // Use AdmZip for more reliable extraction
+                    const zip = new AdmZip(nativePath);
+                    const entries = zip.getEntries();
+                    
+                    // Find all DLL files
+                    const dllEntries = entries.filter(entry => 
+                        entry.entryName.endsWith('.dll') && 
+                        !entry.entryName.includes('META-INF/')
+                    );
+                    
+                    if (dllEntries.length > 0) {
+                        logger.info(`Found ${dllEntries.length} DLLs in ${libName}`);
+                        
+                        // Extract each DLL
+                        for (const entry of dllEntries) {
+                            const fileName = path.basename(entry.entryName);
+                            logger.info(`Extracting DLL: ${fileName}`);
+                            zip.extractEntryTo(entry.entryName, nativesDir, false, true);
+                            extractedFiles.add(fileName.toLowerCase());
+                            successfulExtracts++;
                         }
                     } else {
-                        // Use standard extraction for other versions
+                        logger.warn(`No DLLs found in ${libName}`);
+                    }
+                } catch (error) {
+                    logger.error(`Error extracting ${libName}: ${error.message}`);
+                    // Try fallback with extract-zip if AdmZip fails
+                    try {
                         await extract(nativePath, {
                             dir: nativesDir,
                             onEntry: (entry) => {
                                 const fileName = path.basename(entry.fileName).toLowerCase();
                                 if (fileName.endsWith('.dll') && !extractedFiles.has(fileName)) {
-                                    logger.info(`Extracting: ${fileName}`);
+                                    logger.info(`Fallback extracting: ${fileName}`);
                                     extractedFiles.add(fileName);
                                     successfulExtracts++;
                                     return true;
@@ -704,72 +704,32 @@ class MinecraftLauncher {
                                 return false;
                             }
                         });
+                    } catch (fallbackError) {
+                        logger.error(`Fallback extraction also failed: ${fallbackError.message}`);
                     }
-                } catch (error) {
-                    logger.error(`Error extracting ${libName}: ${error.message}`);
                 }
             }
-
+            
             // Log what was extracted
-            logger.info(`Extracted natives: ${Array.from(extractedFiles).join(', ')}`);
-            logger.info(`Successful extractions: ${successfulExtracts}`);
-
-            // For 1.19.x, just check if we extracted any DLLs
-            if (is119Version) {
-                if (extractedFiles.size === 0) {
-                    throw new Error('No natives were extracted for Minecraft 1.19.x');
-                }
-                logger.info(`Successfully extracted ${extractedFiles.size} native files for Minecraft 1.19.x`);
-            } else {
-                // For other versions, verify critical natives
-                const requiredPrefixes = [
-                    'lwjgl',
-                    'glfw',
-                    'openal',
-                    'jemalloc'
-                ];
-
-                const missingNatives = requiredPrefixes.filter(prefix => 
-                    !Array.from(extractedFiles).some(file => 
-                        file.toLowerCase().startsWith(prefix.toLowerCase())
-                    )
-                );
-
-                if (missingNatives.length > 0) {
-                    throw new Error(`Missing required natives: ${missingNatives.join(', ')}`);
-                }
+            const extractedList = Array.from(extractedFiles);
+            logger.info(`Extracted natives (${extractedList.length}): ${extractedList.join(', ')}`);
+            
+            // Verify extraction success
+            if (extractedFiles.size === 0) {
+                throw new Error(`No native libraries were extracted for Minecraft ${version}`);
             }
-
+            
             // Set proper permissions
             const files = await fs.readdir(nativesDir);
             for (const file of files) {
                 await fs.chmod(path.join(nativesDir, file), 0o755);
-                logger.info(`Set permissions for ${file}`);
             }
-
-            logger.info(`Successfully extracted ${files.length} native files for modern Minecraft`);
+            
+            logger.info(`Successfully extracted ${files.length} native files for Minecraft ${version}`);
             return true;
-
         } catch (error) {
-            logger.error(`Failed to extract modern natives: ${error.stack}`);
+            logger.error(`Failed to extract natives: ${error.message}`);
             throw error;
-        }
-    }
-
-    async downloadNativeJar(nativeData, nativePath) {
-        try {
-            await fs.ensureDir(path.dirname(nativePath));
-            const response = await fetch(nativeData.url);
-            if (!response.ok) {
-                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-            }
-            const buffer = await response.buffer();
-            await fs.writeFile(nativePath, buffer);
-            logger.info(`Downloaded native: ${nativePath}`);
-            return true;
-        } catch (error) {
-            logger.error(`Failed to download native ${nativePath}: ${error.message}`);
-            return false;
         }
     }
 
@@ -991,161 +951,167 @@ class MinecraftLauncher {
         }
     }
 
-    async launch(version, username, isTest = false) {
+    async launch(version, username, options = {}) {
         try {
+            logger.info(`Launching Minecraft ${version} for user ${username}`);
+            
             const versionDir = path.join(this.baseDir, 'versions', version);
             const versionJsonPath = path.join(versionDir, `${version}.json`);
             
-            // Check if version is installed
             if (!fs.existsSync(versionJsonPath)) {
                 logger.info(`Version ${version} not installed, installing now...`);
-                const installer = new MinecraftInstaller();
+                const installer = new MinecraftInstaller(this.baseDir);
+                
+                // Add event listener for installation progress
+                installer.on('progress', (data) => {
+                    // Forward progress events to the renderer
+                    const mainWindow = require('electron').BrowserWindow.getAllWindows()[0];
+                    if (mainWindow && !mainWindow.isDestroyed()) {
+                        mainWindow.webContents.send('install-progress', data);
+                    }
+                });
+                
                 await installer.installVersion(version);
                 
-                // Verify installation
+                // Verify installation again
                 if (!fs.existsSync(versionJsonPath)) {
-                    throw new Error(`Failed to install version ${version}`);
+                    throw new Error(`Failed to install ${version}`);
                 }
             }
-
-            const versionJson = require(versionJsonPath);
             
-            // Get required Java version first
-            const requiredJavaVersion = this.getRequiredJavaVersion(versionJson);
-            logger.info(`Required Java version for Minecraft ${version}: ${requiredJavaVersion}`);
-            
-            // Find appropriate Java installation
-            const javaPath = this.findJavaPath(requiredJavaVersion);
-            if (!javaPath) {
-                throw new Error(`Required Java version (${requiredJavaVersion}) not found`);
+            // Read version info
+            let versionInfo;
+            try {
+                const versionData = await fs.readFile(versionJsonPath, 'utf8');
+                versionInfo = JSON.parse(versionData);
+            } catch (error) {
+                logger.error(`Error reading version JSON file: ${error.message}`);
+                throw new Error(`Failed to read version data for ${version}: ${error.message}`);
             }
-
-            // Determine if this is an old version (pre-1.8) that needs special handling
-            const isOldVersion = this.isOldMinecraftVersion(version);
             
-            // Set up basic arguments map
-            const argMap = {
-                auth_player_name: username,
-                version_name: version,
-                game_directory: this.baseDir,
-                assets_root: path.join(this.baseDir, 'assets'),
-                assets_index_name: versionJson.assetIndex?.id || "legacy",
-                auth_uuid: this.generateUUID(),
-                auth_access_token: '0',
-                user_type: 'msa',
-                version_type: versionJson.type || 'release',
-                natives_directory: path.join(versionDir, 'natives'),
-                launcher_name: 'alright-launcher',
-                launcher_version: '3.0',
-                classpath: this.getLibrariesClasspath(version),
-                // For older versions, use empty JSON object for user properties
-                user_properties: isOldVersion ? '{}' : '[]'
-            };
-
-            // Default JVM arguments
-            const defaultJvmArgs = [
-                `-Xmx${process.env.MAX_MEMORY || '2G'}`,
-                '-XX:+UnlockExperimentalVMOptions',
-                '-XX:+UseG1GC',
-                '-XX:G1NewSizePercent=20',
-                '-XX:G1ReservePercent=20',
-                '-XX:MaxGCPauseMillis=50',
-                '-XX:G1HeapRegionSize=32M',
-                `-Djava.library.path=${argMap.natives_directory}`,
-                `-Dorg.lwjgl.librarypath=${argMap.natives_directory}`,
-                `-Dminecraft.launcher.brand=${argMap.launcher_name}`,
-                `-Dminecraft.launcher.version=${argMap.launcher_version}`
-            ];
-
-            let args = [...defaultJvmArgs];
-
-            // Handle modern versions with arguments structure
-            if (versionJson.arguments) {
-                // Add JVM arguments if present
-                if (versionJson.arguments.jvm) {
-                    for (const arg of versionJson.arguments.jvm) {
-                        if (typeof arg === 'string') {
-                            args.push(this.processArgument(arg, argMap));
-                        } else if (arg.rules && this.checkRules(arg.rules)) {
-                            const value = Array.isArray(arg.value) ? arg.value : [arg.value];
-                            args.push(...value.map(v => this.processArgument(v, argMap)));
-                        }
-                    }
-                }
-
-                // Add classpath if not already added by JVM args
-                if (!args.some(arg => arg.startsWith('-cp') || arg.startsWith('-classpath'))) {
-                    args.push('-cp', argMap.classpath);
-                }
-
-                // Add main class
-                args.push(versionJson.mainClass);
-
-                // Add game arguments
-                for (const arg of versionJson.arguments.game) {
-                    if (typeof arg === 'string') {
-                        args.push(this.processArgument(arg, argMap));
-                    } else if (arg.rules && this.checkRules(arg.rules)) {
-                        const value = Array.isArray(arg.value) ? arg.value : [arg.value];
-                        args.push(...value.map(v => this.processArgument(v, argMap)));
-                    }
-                }
+            // Special handling for newer versions that need specific LWJGL natives
+            const nativesDir = path.join(versionDir, 'natives');
+            await fs.ensureDir(nativesDir);
+            
+            // Always clear the natives directory before extraction to avoid conflicts
+            logger.info(`Clearing natives directory for ${version}`);
+            await fs.emptyDir(nativesDir);
+            
+            // Extract version-specific natives based on LWJGL version
+            const lwjglVersion = this.detectLwjglVersion(versionInfo);
+            logger.info(`Detected LWJGL version: ${lwjglVersion} for Minecraft ${version}`);
+            
+            // Special handling for Minecraft 1.20.5 and newer which uses LWJGL 3.3.3
+            if (version === '1.20.5' || this.isVersionNewerOrEqual(version, '1.20.5')) {
+                logger.info(`Using special natives extraction for Minecraft ${version}`);
+                await this.extractModernNatives(version, versionInfo, nativesDir, lwjglVersion);
+            } else if (this.isVersionNewerOrEqual(version, '1.19')) {
+                logger.info(`Using 1.19+ natives extraction for Minecraft ${version}`);
+                await this.extractModernNatives(version, versionInfo, nativesDir);
             } else {
-                // Legacy version handling
-                args.push('-cp', argMap.classpath);
-                args.push(versionJson.mainClass);
+                // Use legacy extraction for older versions
+                logger.info(`Using legacy natives extraction for Minecraft ${version}`);
+                await this.extractLegacyNatives(version, versionInfo, nativesDir);
+            }
+            
+            // Build classpath with error handling
+            let classpath;
+            try {
+                classpath = await this.buildClasspath(versionInfo, version);
+                if (!classpath) {
+                    throw new Error('Failed to build classpath - empty result');
+                }
+            } catch (error) {
+                logger.error(`Error building classpath: ${error.message}`);
+                throw new Error(`Failed to build classpath: ${error.message}`);
+            }
+            
+            // Build launch arguments with error handling
+            let jvmArgs, gameArgs;
+            try {
+                const gameDir = path.join(this.baseDir);
+                const assetsDir = path.join(this.baseDir, 'assets');
                 
-                if (versionJson.minecraftArguments) {
-                    const gameArgs = versionJson.minecraftArguments.split(' ').map(arg => 
-                        this.processArgument(arg, argMap)
-                    );
-                    args.push(...gameArgs);
+                jvmArgs = this.buildJvmArgs(versionInfo, {
+                    classpath,
+                    nativesDir,
+                    gameDir,
+                    assetsDir,
+                    version
+                });
+                
+                gameArgs = this.buildGameArgs(versionInfo, {
+                    username,
+                    version,
+                    gameDir,
+                    assetsDir
+                });
+            } catch (error) {
+                logger.error(`Error building launch arguments: ${error.message}`);
+                throw new Error(`Failed to build launch arguments: ${error.message}`);
+            }
+            
+            // Find Java path with error handling
+            let javaPath;
+            try {
+                const requiredJavaVersion = this.getRequiredJavaVersion(versionInfo);
+                javaPath = await this.findJavaPath(requiredJavaVersion);
+                if (!javaPath) {
+                    throw new Error(`Could not find Java for ${requiredJavaVersion} version`);
                 }
+            } catch (error) {
+                logger.error(`Error finding Java: ${error.message}`);
+                throw new Error(`Failed to find suitable Java installation: ${error.message}`);
             }
-
-            // Determine native extraction method based on version
-            if (version === '1.20' || version === '1.21') {
-                await this.extract120Natives(version, argMap.natives_directory);
-            } else if (this.isVersion119OrNewer(version)) {
-                // Use modified extraction for 1.19.x
-                await this.extractModernNatives(version, versionJson, argMap.natives_directory);
-            } else {
-                await this.extractLegacyNatives(version, versionJson, argMap.natives_directory);
+            
+            // Combine all arguments
+            const args = [...jvmArgs, versionInfo.mainClass, ...gameArgs];
+            
+            // Launch the game process
+            logger.info(`Launching with Java: ${javaPath}`);
+            logger.info(`Command line: ${javaPath} ${args.join(' ')}`);
+            
+            let gameProcess;
+            try {
+                gameProcess = spawn(javaPath, args, {
+                    cwd: path.join(this.baseDir),
+                    detached: false, // Changed to false to maintain control
+                    stdio: 'pipe' // Changed to pipe to capture output for debugging
+                });
+                
+                // Store PID for tracking
+                this.runningProcesses.set(version, gameProcess.pid);
+                
+                // Log stdout and stderr for debugging
+                gameProcess.stdout.on('data', (data) => {
+                    logger.info(`Game stdout: ${data.toString().trim()}`);
+                });
+                
+                gameProcess.stderr.on('data', (data) => {
+                    logger.warn(`Game stderr: ${data.toString().trim()}`);
+                });
+                
+                // Handle process errors
+                gameProcess.on('error', (err) => {
+                    logger.error(`Game process error: ${err.message}`);
+                });
+                
+                return {
+                    success: true,
+                    pid: gameProcess.pid,
+                    process: gameProcess
+                };
+            } catch (error) {
+                logger.error(`Error spawning game process: ${error.message}`);
+                throw new Error(`Failed to start game process: ${error.message}`);
             }
-
-            logger.info(`Launch command: ${javaPath} ${args.join(' ')}`);
-
-            const minecraft = spawn(javaPath, args, {
-                cwd: this.baseDir,
-                stdio: ['pipe', 'pipe', 'pipe'],
-                detached: !isTest
-            });
-
-            // Monitor process output
-            minecraft.stdout.on('data', (data) => {
-                logger.info(`Game output: ${data}`);
-            });
-
-            minecraft.stderr.on('data', (data) => {
-                logger.error(`Game error: ${data}`);
-            });
-
-            const pid = minecraft.pid;
-            this.runningProcesses.set(version, pid);
-
-            minecraft.on('exit', (code, signal) => {
-                this.runningProcesses.delete(version);
-                logger.info(`Game process exited with code ${code} and signal ${signal}`);
-            });
-
-            if (!isTest) {
-                minecraft.unref();
-            }
-
-            return { success: true, pid, process: minecraft };
         } catch (error) {
-            logger.error(`Launch error: ${error.stack}`);
-            throw error;
+            logger.error(`Launch error: ${error.message}`);
+            logger.error(error.stack);
+            return {
+                success: false,
+                error: error.message
+            };
         }
     }
 
@@ -1243,6 +1209,218 @@ class MinecraftLauncher {
         
         // Versions are equal
         return true;
+    }
+
+    // Add new method to detect LWJGL version from libraries
+    detectLwjglVersion(versionJson) {
+        // Default to 3.2.2 if we can't detect
+        let detectedVersion = '3.2.2';
+        
+        try {
+            // Look for LWJGL in the libraries list
+            const lwjglLib = versionJson.libraries.find(lib => 
+                lib.name && lib.name.startsWith('org.lwjgl:lwjgl:')
+            );
+            
+            if (lwjglLib) {
+                // Extract version from name format org.lwjgl:lwjgl:VERSION
+                const parts = lwjglLib.name.split(':');
+                if (parts.length >= 3) {
+                    detectedVersion = parts[2];
+                    logger.info(`Found LWJGL version ${detectedVersion}`);
+                }
+            } else {
+                // Fallback: try to determine by Minecraft version
+                if (versionJson.id.startsWith('1.20')) {
+                    // Most 1.20.x versions use LWJGL 3.3.1 or higher
+                    detectedVersion = '3.3.3';
+                } else if (versionJson.id.startsWith('1.19')) {
+                    detectedVersion = '3.3.1';
+                } else if (versionJson.id.startsWith('1.18') || versionJson.id.startsWith('1.17')) {
+                    detectedVersion = '3.2.2';
+                } else if (versionJson.id.startsWith('1.16')) {
+                    detectedVersion = '3.2.1';
+                } else {
+                    // Older versions use LWJGL 2.x
+                    detectedVersion = '2.9.4';
+                }
+                
+                logger.info(`Estimated LWJGL version ${detectedVersion} based on Minecraft version ${versionJson.id}`);
+            }
+        } catch (error) {
+            logger.warn(`Failed to detect LWJGL version: ${error.message}`);
+        }
+        
+        return detectedVersion;
+    }
+
+    // Add new method to specifically handle LWJGL 3.3.3 natives for Minecraft 1.20.5
+    async ensureLwjgl333Natives(nativesDir, nativesMap, extractedFiles) {
+        const lwjglVersion = '3.3.3';
+        logger.info(`Ensuring LWJGL ${lwjglVersion} natives are available`);
+        
+        // Essential LWJGL components needed
+        const essentialComponents = [
+            'lwjgl',
+            'lwjgl-opengl',
+            'lwjgl-openal',
+            'lwjgl-jemalloc',
+            'lwjgl-glfw',
+            'lwjgl-stb',
+            'lwjgl-tinyfd'
+        ];
+        
+        // Check which components we already have
+        const missingComponents = essentialComponents.filter(component => {
+            const key = `org.lwjgl:${component}:${lwjglVersion}`;
+            return !nativesMap.has(key);
+        });
+        
+        // Download missing components from Maven Central
+        if (missingComponents.length > 0) {
+            logger.info(`Need to download ${missingComponents.length} missing LWJGL components`);
+            
+            for (const component of missingComponents) {
+                const nativeUrl = `https://repo1.maven.org/maven2/org/lwjgl/${component}/${lwjglVersion}/${component}-${lwjglVersion}-natives-windows.jar`;
+                const nativePath = path.join(
+                    this.librariesDir, 
+                    'org', 'lwjgl', 
+                    component, 
+                    lwjglVersion, 
+                    `${component}-${lwjglVersion}-natives-windows.jar`
+                );
+                
+                // Create directory if needed
+                await fs.ensureDir(path.dirname(nativePath));
+                
+                try {
+                    logger.info(`Downloading ${component} native from ${nativeUrl}`);
+                    const response = await fetch(nativeUrl);
+                    
+                    if (!response.ok) {
+                        logger.error(`Failed to download ${component}: ${response.statusText}`);
+                        continue;
+                    }
+                    
+                    const arrayBuffer = await response.arrayBuffer();
+                    await fs.writeFile(nativePath, Buffer.from(arrayBuffer));
+                    
+                    logger.info(`Successfully downloaded ${component} native`);
+                    nativesMap.set(`org.lwjgl:${component}:${lwjglVersion}`, nativePath);
+                } catch (error) {
+                    logger.error(`Error downloading ${component} native: ${error.message}`);
+                }
+            }
+        }
+    }
+
+    // Add method to find and download missing natives as needed
+    async findAndDownloadMissingNatives(lwjglVersion, nativesDir, extractedFiles) {
+        logger.info(`Searching for LWJGL ${lwjglVersion} natives in alternative locations...`);
+        
+        // List of essential components to check
+        const components = [
+            'lwjgl',
+            'lwjgl-opengl',
+            'lwjgl-openal',
+            'lwjgl-jemalloc',
+            'lwjgl-glfw',
+            'lwjgl-stb',
+            'lwjgl-tinyfd'
+        ];
+        
+        // Find any LWJGL native JARs in the library directory
+        const lwjglPaths = [
+            path.join(this.librariesDir, 'org', 'lwjgl'),
+            path.join(this.librariesDir, 'org', 'lwjgl3')
+        ];
+        
+        for (const basePath of lwjglPaths) {
+            if (!await fs.pathExists(basePath)) continue;
+            
+            // Check each component
+            for (const component of components) {
+                const componentPath = path.join(basePath, component);
+                if (!await fs.pathExists(componentPath)) continue;
+                
+                // Look for version directory
+                const versionPath = path.join(componentPath, lwjglVersion);
+                if (await fs.pathExists(versionPath)) {
+                    // Find native JAR files
+                    const files = (await fs.readdir(versionPath)).filter(f => 
+                        f.includes('natives-windows') && f.endsWith('.jar')
+                    );
+                    
+                    if (files.length > 0) {
+                        for (const file of files) {
+                            const jarPath = path.join(versionPath, file);
+                            logger.info(`Found native JAR: ${jarPath}`);
+                            
+                            try {
+                                // Extract native DLLs
+                                const zip = new AdmZip(jarPath);
+                                
+                                // Extract DLL files
+                                for (const entry of zip.getEntries()) {
+                                    if (entry.entryName.endsWith('.dll') && !entry.entryName.includes('META-INF')) {
+                                        const fileName = path.basename(entry.entryName);
+                                        zip.extractEntryTo(entry, nativesDir, false, true);
+                                        extractedFiles.add(fileName.toLowerCase());
+                                        logger.info(`Extracted: ${fileName}`);
+                                    }
+                                }
+                            } catch (err) {
+                                logger.error(`Failed to extract from ${file}: ${err.message}`);
+                            }
+                        }
+                    } else {
+                        logger.info(`No native JARs found for ${component} ${lwjglVersion}`);
+                    }
+                } else {
+                    logger.info(`Version ${lwjglVersion} not found for ${component}`);
+                }
+            }
+        }
+        
+        // If still missing natives, try downloading from Maven
+        if (extractedFiles.size === 0) {
+            logger.info(`No natives found locally, downloading from Maven`);
+            
+            for (const component of components) {
+                const nativeUrl = `https://repo1.maven.org/maven2/org/lwjgl/${component}/${lwjglVersion}/${component}-${lwjglVersion}-natives-windows.jar`;
+                const tempPath = path.join(os.tmpdir(), `lwjgl-${component}-${lwjglVersion}-natives.jar`);
+                
+                try {
+                    logger.info(`Downloading ${component} from Maven: ${nativeUrl}`);
+                    const response = await fetch(nativeUrl);
+                    
+                    if (!response.ok) {
+                        logger.error(`Failed to download ${component}: ${response.statusText}`);
+                        continue;
+                    }
+                    
+                    const arrayBuffer = await response.arrayBuffer();
+                    await fs.writeFile(tempPath, Buffer.from(arrayBuffer));
+                    
+                    // Extract from downloaded JAR
+                    const zip = new AdmZip(tempPath);
+                    for (const entry of zip.getEntries()) {
+                        if (entry.entryName.endsWith('.dll') && !entry.entryName.includes('META-INF')) {
+                            const fileName = path.basename(entry.entryName);
+                            zip.extractEntryTo(entry, nativesDir, false, true);
+                            extractedFiles.add(fileName.toLowerCase());
+                            logger.info(`Extracted from Maven: ${fileName}`);
+                        }
+                    }
+                    
+                    // Clean up temp file
+                    await fs.unlink(tempPath);
+                    
+                } catch (error) {
+                    logger.error(`Failed to download ${component} from Maven: ${error.message}`);
+                }
+            }
+        }
     }
 }
 

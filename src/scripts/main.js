@@ -178,93 +178,121 @@ function registerIpcHandlers() {
 
     ipcMain.handle('launch-game', async (event, { version, username }) => {
         try {
+            logger.info(`Launch request received for Minecraft ${version} with username ${username}`);
+            
+            // Set a timeout for the launch process
+            const launchTimeout = setTimeout(() => {
+                logger.error(`Launch timed out for Minecraft ${version}`);
+                throw new Error('Launch operation timed out after 60 seconds');
+            }, 60000); // 60 second timeout
+            
             if (!minecraftLauncher) {
                 const baseDir = global.minecraftPath;
                 minecraftLauncher = new MinecraftLauncher(baseDir);
+                logger.info(`Created new MinecraftLauncher instance with baseDir: ${baseDir}`);
             }
 
+            logger.info(`Calling minecraftLauncher.launch for ${version}...`);
             const result = await minecraftLauncher.launch(version, username);
-            if (!result || !result.process) {
-                return { success: false, error: 'Failed to start game' };
+            
+            // Clear the timeout since we got a response
+            clearTimeout(launchTimeout);
+            
+            if (!result) {
+                logger.error('Launch failed - no result returned');
+                return { success: false, error: 'Launch failed - no result returned from launcher' };
+            }
+            
+            if (!result.success) {
+                logger.error(`Launch failed: ${result.error}`);
+                return { success: false, error: result.error || 'Unknown launch error' };
             }
 
+            logger.info(`Game launched successfully with PID: ${result.pid || 'unknown'}`);
+            
             // Monitor for crashes
-            result.process.on('exit', async (code) => {
-                if (code !== 0) {
-                    // Check multiple possible crash report locations
-                    const crashLocations = [
-                        path.join(global.minecraftPath, 'crash-reports'),
-                        path.join(process.cwd(), 'crash-reports')
-                    ];
-
-                    for (const crashDir of crashLocations) {
+            if (result.process) {
+                result.process.on('exit', async (code) => {
+                    logger.info(`Game process exited with code: ${code}`);
+                    
+                    // Check for crash reports only on abnormal exits
+                    if (code !== 0) {
                         try {
-                            // Ensure crash directory exists
-                            await fs.ensureDir(crashDir);
-                            
-                            const files = await fs.readdir(crashDir);
-                            if (files.length > 0) {
-                                const latestCrash = files
-                                    .map(file => ({
-                                        name: file,
-                                        path: path.join(crashDir, file),
-                                        time: fs.statSync(path.join(crashDir, file)).mtime
-                                    }))
-                                    .sort((a, b) => b.time - a.time)[0];
-
-                                if (latestCrash && Date.now() - latestCrash.time < 5000) { // Only if crash file is recent
-                                    const crashContent = await fs.readFile(latestCrash.path, 'utf8');
-                                    mainWindow.webContents.send('game-crashed', {
-                                        version,
-                                        crashFile: latestCrash.name,
-                                        crashContent: crashContent
-                                    });
-                                    break; // Stop checking other locations if we found a crash report
-                                }
+                            const crashReportFound = await checkForCrashReport(version);
+                            if (crashReportFound) {
+                                logger.info('Crash report was found and sent to renderer');
                             }
-                        } catch (error) {
-                            console.log(`No crash reports found in ${crashDir}`);
+                        } catch (err) {
+                            logger.error(`Error checking crash reports: ${err.message}`);
                         }
                     }
-
-                    // If no crash report found, send a generic crash message
-                    if (!mainWindow.isDestroyed()) {
-                        mainWindow.webContents.send('game-crashed', {
+                    
+                    // Always send game-closed event
+                    if (mainWindow && !mainWindow.isDestroyed()) {
+                        mainWindow.webContents.send('game-closed', {
                             version,
-                            crashFile: 'unknown',
-                            crashContent: `Game exited with code ${code}. No crash report found.`
+                            code,
+                            message: code === 0 ? 'normal exit' : 'error exit'
                         });
                     }
-                }
-
-                // Always send game-closed event
-                if (!mainWindow.isDestroyed()) {
-                    mainWindow.webContents.send('game-closed', { 
-                        version, 
-                        code,
-                        message: code === 0 ? 'normal exit' : 'error exit'
-                    });
-                }
+                });
                 
-                // Ensure launcher is shown when game exits
-                if (mainWindow && !mainWindow.isDestroyed()) {
-                    if (process.platform === 'win32') {
-                        // mainWindow.setSkipTaskbar(false);
-                        mainWindow.restore();
-                        mainWindow.focus();
-                    } else {
-                        mainWindow.show();
-                        mainWindow.focus();
-                    }
-                }
-            });
-
-            return { success: true, pid: result.pid };
+                return { success: true, pid: result.pid || 0 };
+            } else {
+                logger.warn('Game launched but no process object was returned');
+                return { success: true, warning: 'No process handle available' };
+            }
         } catch (error) {
-            console.error('Launch error:', error);
+            logger.error(`Launch error: ${error.message}`);
+            logger.error(error.stack);
             return { success: false, error: error.message };
         }
     });
+
+    // Helper function to check for crash reports
+    async function checkForCrashReport(version) {
+        try {
+            // Check multiple possible crash report locations
+            const crashLocations = [
+                path.join(global.minecraftPath, 'crash-reports'),
+                path.join(process.cwd(), 'crash-reports')
+            ];
+
+            for (const crashDir of crashLocations) {
+                // Ensure crash directory exists
+                await fs.ensureDir(crashDir);
+                
+                const files = await fs.readdir(crashDir);
+                if (files.length > 0) {
+                    // Get the most recent crash file
+                    const latestCrash = files
+                        .map(file => ({
+                            name: file,
+                            path: path.join(crashDir, file),
+                            time: fs.statSync(path.join(crashDir, file)).mtime
+                        }))
+                        .sort((a, b) => b.time - a.time)[0];
+
+                    if (latestCrash && Date.now() - latestCrash.time < 5000) {
+                        // Only if crash file is recent (within 5 seconds)
+                        const crashContent = await fs.readFile(latestCrash.path, 'utf8');
+                        if (mainWindow && !mainWindow.isDestroyed()) {
+                            mainWindow.webContents.send('game-crashed', {
+                                version,
+                                crashFile: latestCrash.name,
+                                crashContent: crashContent
+                            });
+                            return true;
+                        }
+                    }
+                }
+            }
+            return false;
+        } catch (error) {
+            logger.error(`Error checking crash reports: ${error.message}`);
+            return false;
+        }
+    }
 
     ipcMain.handle('get-versions', async () => {
         try {

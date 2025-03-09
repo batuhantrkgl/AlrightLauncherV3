@@ -5,9 +5,13 @@ const logger = require('./logger');
 const extract = require('extract-zip');
 const cliProgress = require('cli-progress');
 const AdmZip = require('adm-zip'); // Add this import
+const EventEmitter = require('events'); // Add this import
+const os = require('os'); // Add this for os.tmpdir()
 
-class MinecraftInstaller {
+class MinecraftInstaller extends EventEmitter { // Extend EventEmitter
     constructor() {
+        super(); // Initialize EventEmitter
+        
         this.baseDir = path.join(process.env.APPDATA, '.alrightlauncher');
         this.versionsDir = path.join(this.baseDir, 'versions');
         this.assetsDir = path.join(this.baseDir, 'assets');
@@ -688,6 +692,27 @@ class MinecraftInstaller {
             const versionResponse = await fetch(versionInfo.url);
             const versionData = await versionResponse.json();
 
+            // Validate the version data has required fields
+            if (!versionData.libraries) {
+                logger.error(`Invalid version data: missing libraries array for ${version}`);
+                throw new Error(`Invalid version data for ${version}: missing libraries array`);
+            }
+            
+            // Filter out invalid library entries
+            const validLibraries = versionData.libraries.filter(lib => {
+                if (!lib) {
+                    logger.warn(`Found undefined library entry in ${version}, skipping`);
+                    return false;
+                }
+                return true;
+            });
+            
+            // Log the number of invalid entries if any were filtered
+            if (validLibraries.length !== versionData.libraries.length) {
+                logger.warn(`Filtered out ${versionData.libraries.length - validLibraries.length} invalid library entries`);
+                versionData.libraries = validLibraries;
+            }
+
             // Create directories
             const versionDir = path.join(this.versionsDir, version);
             await fs.ensureDir(versionDir);
@@ -699,9 +724,27 @@ class MinecraftInstaller {
             const totalLibraries = versionData.libraries.length;
             for (let i = 0; i < totalLibraries; i++) {
                 const lib = versionData.libraries[i];
-                if (!lib.downloads?.artifact) continue;
+                
+                // Skip undefined or incomplete library entries
+                if (!lib || !lib.downloads) {
+                    logger.warn(`Skipping invalid library entry at index ${i}`);
+                    continue;
+                }
+                
+                // Skip libraries without artifact information
+                if (!lib.downloads.artifact) {
+                    logger.info(`Library entry ${i} (${lib.name || 'unnamed'}) has no artifact, skipping`);
+                    continue;
+                }
 
                 const progress = 10 + (40 * (i / totalLibraries));
+                
+                // Add safeguard for path
+                if (!lib.downloads.artifact.path) {
+                    logger.warn(`Library ${lib.name || `entry #${i}`} has no path defined, skipping`);
+                    continue;
+                }
+                
                 const libPath = path.join(this.librariesDir, lib.downloads.artifact.path);
                 await fs.ensureDir(path.dirname(libPath));
 
@@ -709,10 +752,10 @@ class MinecraftInstaller {
                     await this.downloadFile(
                         lib.downloads.artifact.url, 
                         libPath,
-                        `Library: ${lib.name}`
+                        `Library: ${lib.name || `#${i}`}`
                     );
                 } else {
-                    await this.sendProgress(progress, 'Checking Libraries', `Verified: ${lib.name}`);
+                    await this.sendProgress(progress, 'Checking Libraries', `Verified: ${lib.name || `#${i}`}`);
                 }
             }
 
@@ -772,9 +815,16 @@ class MinecraftInstaller {
                 JSON.stringify(versionData, null, 2)
             );
 
-            // Download and extract natives
+            // Download and extract natives - provide better error context
             await this.sendProgress(97, 'Downloading Natives', 'Downloading and extracting native libraries...');
-            await this.downloadLibraries(versionData);
+            try {
+                // Use the modified downloadLibraries that handles undefined paths
+                await this.downloadLibraries(versionData.libraries, version);
+            } catch (error) {
+                logger.warn(`Native extraction encountered issues: ${error.message}`);
+                logger.info('Continuing installation process despite native issues');
+                // We continue the installation, since some natives might be optional
+            }
 
             await this.sendProgress(100, 'Complete', `Successfully installed Minecraft ${version}`);
             return true;
@@ -915,6 +965,471 @@ class MinecraftInstaller {
         }
         
         return nativeJars;
+    }
+
+    async downloadLibraries(libraries, version) {
+        try {
+            // Make sure we have valid inputs
+            if (!libraries || !Array.isArray(libraries)) {
+                throw new Error('Invalid libraries array provided');
+            }
+            
+            if (!version || typeof version !== 'string') {
+                throw new Error('Invalid version string provided');
+            }
+            
+            const nativesDir = path.join(this.baseDir, 'versions', version, 'natives');
+            await fs.ensureDir(nativesDir);
+
+            // Updated essential natives list to include opengl.dll
+            const essentialNatives = [
+                'lwjgl.dll', 
+                'OpenAL.dll', 
+                'OpenAL32.dll', 
+                'glfw.dll', 
+                'jemalloc.dll', 
+                'stb.dll', 
+                'opengl.dll',          
+                'lwjgl_opengl.dll'     
+            ];
+            const extractedNatives = new Set();
+            
+            this.emit('progress', { phase: 'Downloading libraries', percent: 0 });
+            
+            // Filter out invalid library entries before processing
+            const validLibraries = libraries.filter(lib => !!lib);
+            if (validLibraries.length !== libraries.length) {
+                logger.warn(`Filtered ${libraries.length - validLibraries.length} invalid library entries`);
+            }
+            
+            // Keep track of total libraries and processed count
+            const totalLibraries = validLibraries.length;
+            let processedCount = 0;
+            
+            for (const library of validLibraries) {
+                processedCount++;
+                const progressPercent = (processedCount / totalLibraries) * 100;
+                this.emit('progress', { 
+                    phase: 'Downloading libraries', 
+                    percent: progressPercent, 
+                    detail: `${processedCount}/${totalLibraries}`
+                });
+                
+                try {
+                    // Skip if this is a natives library that doesn't match our OS
+                    if (library.rules && !this.matchRules(library.rules)) {
+                        continue;
+                    }
+                    
+                    // Process the main library artifact
+                    if (library.downloads && library.downloads.artifact) {
+                        const artifact = library.downloads.artifact;
+                        
+                        // Ensure all path components are defined
+                        if (!artifact.path) {
+                            logger.warn(`Library ${library.name || 'unknown'} has no path defined, skipping`);
+                            continue;
+                        }
+                        
+                        const libPath = path.join(this.baseDir, 'libraries', artifact.path);
+                        
+                        await fs.ensureDir(path.dirname(libPath));
+                        
+                        if (!await this.isValidFile(libPath, artifact.sha1)) {
+                            await this.downloadFile(artifact.url, libPath, `Library: ${library.name || 'unknown'}`);
+                        }
+                    }
+                    
+                    // Process natives if available
+                    if (library.downloads && library.downloads.classifiers) {
+                        let nativesKey = null;
+                        
+                        // Determine which native key to use based on OS
+                        if (process.platform === 'win32') {
+                            if (process.arch === 'x64') {
+                                nativesKey = 'natives-windows';
+                            } else if (process.arch === 'ia32') {
+                                nativesKey = 'natives-windows-x86';
+                            } else if (process.arch === 'arm64') {
+                                nativesKey = 'natives-windows-arm64';
+                            }
+                        } else if (process.platform === 'darwin') {
+                            nativesKey = process.arch === 'arm64' ? 'natives-macos-arm64' : 'natives-macos';
+                        } else if (process.platform === 'linux') {
+                            nativesKey = process.arch === 'arm64' ? 'natives-linux-arm64' : 'natives-linux';
+                        }
+                        
+                        // Only try to process if we found a valid native key
+                        if (nativesKey && library.downloads.classifiers[nativesKey]) {
+                            const nativeArtifact = library.downloads.classifiers[nativesKey];
+                            
+                            // Skip if path is not defined
+                            if (!nativeArtifact.path) {
+                                logger.warn(`Native library ${library.name || 'unknown'} (${nativesKey}) has no path defined, skipping`);
+                                continue;
+                            }
+                            
+                            const nativeLibPath = path.join(this.baseDir, 'libraries', nativeArtifact.path);
+                            
+                            await fs.ensureDir(path.dirname(nativeLibPath));
+                            
+                            if (!await this.isValidFile(nativeLibPath, nativeArtifact.sha1)) {
+                                await this.downloadFile(nativeArtifact.url, nativeLibPath, `Native: ${library.name || 'unknown'}`);
+                            }
+                            
+                            // Extract the native library
+                            await this.extractNative(nativeLibPath, nativesDir, extractedNatives);
+                        }
+                    }
+                    
+                    // Handle special case for legacy natives format
+                    if (library.natives) {
+                        const osName = this.getOSName();
+                        const nativeKey = library.natives[osName];
+                        
+                        if (nativeKey) {
+                            // For LWJGL libraries that have a special native format
+                            if (library.name && library.name.startsWith("org.lwjgl")) {
+                                try {
+                                    // Parse library info from the name
+                                    const nameParts = library.name.split(':');
+                                    if (nameParts.length < 3) {
+                                        logger.warn(`Invalid library name format: ${library.name}, skipping`);
+                                        continue;
+                                    }
+                                    
+                                    const [group, artifact, version] = nameParts;
+                                    const classifier = nativeKey.replace("${arch}", this.getArchName());
+                                    
+                                    // Construct the download path and URL for the native
+                                    const nativePath = `${group.replace(/\./g, '/')}/${artifact}/${version}/${artifact}-${version}-${classifier}.jar`;
+                                    const nativeUrl = `https://libraries.minecraft.net/${nativePath}`;
+                                    const nativeLibPath = path.join(this.baseDir, 'libraries', nativePath);
+                                    
+                                    await fs.ensureDir(path.dirname(nativeLibPath));
+                                    
+                                    // Download if doesn't exist or is invalid
+                                    if (!fs.existsSync(nativeLibPath)) {
+                                        try {
+                                            await this.downloadFile(nativeUrl, nativeLibPath);
+                                            // Extract the native library
+                                            await this.extractNative(nativeLibPath, nativesDir, extractedNatives);
+                                        } catch (err) {
+                                            logger.warn(`Warning: Failed to download native ${nativePath}: ${err.message}`);
+                                        }
+                                    } else {
+                                        // Just extract if already exists
+                                        await this.extractNative(nativeLibPath, nativesDir, extractedNatives);
+                                    }
+                                } catch (err) {
+                                    logger.warn(`Failed to process LWJGL native ${library.name}: ${err.message}`);
+                                }
+                            }
+                        }
+                    }
+                } catch (error) {
+                    logger.warn(`Warning: Failed to process library ${library.name || 'unknown'}: ${error.message}`);
+                }
+            }
+            
+            // Verify if all essential natives were extracted
+            const missingNatives = essentialNatives.filter(native => !extractedNatives.has(native.toLowerCase()));
+            
+            logger.info(`Extracted natives: ${Array.from(extractedNatives).join(', ')}`);
+            
+            if (missingNatives.length > 0) {
+                // Try to manually download essential natives if missing
+                await this.downloadMissingNatives(missingNatives, nativesDir);
+                
+                // Check again after manual download attempt
+                const stillMissing = missingNatives.filter(native => 
+                    !fs.existsSync(path.join(nativesDir, native.toLowerCase())) && 
+                    !fs.existsSync(path.join(nativesDir, native))
+                );
+                
+                if (stillMissing.length > 0) {
+                    logger.warn(`Still missing essential natives: ${stillMissing.join(', ')}`);
+                    // Just warn but don't throw - we'll try to run anyway
+                }
+            }
+            
+            return nativesDir;
+        } catch (error) {
+            logger.error(`Failed to download libraries: ${error.message}`);
+            throw error;
+        }
+    }
+
+    async extractNative(jarPath, destDir, extractedSet) {
+        try {
+            // Check if paths are valid
+            if (!jarPath || typeof jarPath !== 'string') {
+                logger.warn(`Invalid jar path for extraction: ${jarPath}`);
+                return;
+            }
+            
+            if (!destDir || typeof destDir !== 'string') {
+                logger.warn(`Invalid destination directory for extraction: ${destDir}`);
+                return;
+            }
+            
+            if (!extractedSet) {
+                extractedSet = new Set();
+            }
+            
+            // Check if file exists before attempting to use AdmZip
+            if (!fs.existsSync(jarPath)) {
+                logger.warn(`Native jar file does not exist: ${jarPath}`);
+                return;
+            }
+            
+            const zip = new AdmZip(jarPath);
+            const entries = zip.getEntries();
+            
+            // Define native file mappings - maps source names to target names
+            const nativeMappings = {
+                'openal.dll': ['openal32.dll'],
+                'openal32.dll': ['openal.dll'],
+                'lwjgl_stb.dll': ['stb.dll'],
+                'lwjgl_opengl.dll': ['opengl.dll'],
+                'lwjgl_openal.dll': ['openal.dll', 'openal32.dll'],
+                'lwjgl_tinyfd.dll': ['tinyfd.dll'],
+                'lwjgl_jemalloc.dll': ['jemalloc.dll'],
+                'lwjgl_glfw.dll': ['glfw.dll']
+            };
+            
+            for (const entry of entries) {
+                // Skip directories and META-INF
+                if (entry.isDirectory || entry.entryName.startsWith('META-INF/')) {
+                    continue;
+                }
+                
+                // Skip non-native files (not .dll, .so, .dylib, etc.)
+                const fileExtension = path.extname(entry.entryName).toLowerCase();
+                if (!['.dll', '.so', '.dylib', '.jnilib'].includes(fileExtension)) {
+                    continue;
+                }
+                
+                const fileName = path.basename(entry.entryName).toLowerCase();
+                const destPath = path.join(destDir, fileName);
+                
+                // Extract the original file
+                zip.extractEntryTo(entry, destDir, false, true);
+                extractedSet.add(fileName);
+                
+                logger.info(`Extracted native: ${fileName}`);
+                
+                // Create aliased versions for LWJGL libraries
+                for (const [sourceName, targetNames] of Object.entries(nativeMappings)) {
+                    if (fileName === sourceName.toLowerCase()) {
+                        for (const targetName of targetNames) {
+                            if (!extractedSet.has(targetName.toLowerCase())) {
+                                const targetPath = path.join(destDir, targetName);
+                                await fs.copyFile(destPath, targetPath);
+                                extractedSet.add(targetName.toLowerCase());
+                                logger.info(`Created ${targetName} from ${fileName}`);
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (error) {
+            logger.warn(`Failed to extract native from ${jarPath}: ${error.message}`);
+        }
+    }
+
+    async downloadMissingNatives(missingNatives, nativesDir) {
+        // Fallback URLs for essential natives
+        const fallbackUrls = {
+            'lwjgl.dll': 'https://libraries.minecraft.net/org/lwjgl/lwjgl/3.3.1/lwjgl-3.3.1-natives-windows.jar',
+            'openal.dll': 'https://libraries.minecraft.net/org/lwjgl/lwjgl-openal/3.3.1/lwjgl-openal-3.3.1-natives-windows.jar',
+            'openal32.dll': 'https://libraries.minecraft.net/org/lwjgl/lwjgl-openal/3.3.1/lwjgl-openal-3.3.1-natives-windows.jar',
+            'glfw.dll': 'https://libraries.minecraft.net/org/lwjgl/lwjgl-glfw/3.3.1/lwjgl-glfw-3.3.1-natives-windows.jar',
+            'jemalloc.dll': 'https://libraries.minecraft.net/org/lwjgl/lwjgl-jemalloc/3.3.1/lwjgl-jemalloc-3.3.1-natives-windows.jar',
+            'stb.dll': 'https://libraries.minecraft.net/org/lwjgl/lwjgl-stb/3.3.1/lwjgl-stb-3.3.1-natives-windows.jar',
+            'tinyfd.dll': 'https://libraries.minecraft.net/org/lwjgl/lwjgl-tinyfd/3.3.1/lwjgl-tinyfd-3.3.1-natives-windows.jar',
+            'opengl.dll': 'https://libraries.minecraft.net/org/lwjgl/lwjgl-opengl/3.3.1/lwjgl-opengl-3.3.1-natives-windows.jar', // Add OpenGL URL
+            'lwjgl_opengl.dll': 'https://libraries.minecraft.net/org/lwjgl/lwjgl-opengl/3.3.1/lwjgl-opengl-3.3.1-natives-windows.jar' // Add LWJGL OpenGL URL
+        };
+        
+        // Define native file mapping for alternatives (used when exact matches aren't found)
+        const nativeAlternatives = {
+            'openal32.dll': ['openal.dll', 'lwjgl_openal.dll'],
+            'openal.dll': ['openal32.dll', 'lwjgl_openal.dll'],
+            'stb.dll': ['lwjgl_stb.dll'],
+            'jemalloc.dll': ['lwjgl_jemalloc.dll'],
+            'glfw.dll': ['lwjgl_glfw.dll'],
+            'tinyfd.dll': ['lwjgl_tinyfd.dll'],
+            'opengl.dll': ['lwjgl_opengl.dll'], // Add OpenGL alternative
+            'lwjgl_opengl.dll': ['opengl.dll']  // Add two-way mapping
+        };
+        
+        for (const native of missingNatives) {
+            const nativeLower = native.toLowerCase();
+            const fallbackUrl = fallbackUrls[nativeLower];
+            
+            if (fallbackUrl) {
+                try {
+                    logger.info(`Attempting to download missing native: ${native}`);
+                    const tempJarPath = path.join(os.tmpdir(), `native-${Date.now()}.jar`);
+                    
+                    await this.downloadFile(fallbackUrl, tempJarPath, `Downloading ${native} library`);
+                    
+                    const extractedSet = new Set();
+                    await this.extractNative(tempJarPath, nativesDir, extractedSet);
+                    
+                    // Clean up temporary file
+                    fs.unlinkSync(tempJarPath);
+                    
+                    // Check if we extracted the exact file we needed
+                    const exactMatch = extractedSet.has(nativeLower);
+                    
+                    if (exactMatch) {
+                        logger.info(`Successfully recovered missing native: ${native}`);
+                    } else {
+                        // Check if we can use an alternative file
+                        const alternativeFiles = nativeAlternatives[nativeLower] || [];
+                        let foundAlternative = false;
+                        
+                        for (const altFile of alternativeFiles) {
+                            if (extractedSet.has(altFile)) {
+                                // We found an alternative, copy it with the required name
+                                const sourcePath = path.join(nativesDir, altFile);
+                                const destPath = path.join(nativesDir, native);
+                                
+                                logger.info(`Using ${altFile} as substitute for ${native}`);
+                                await fs.copyFile(sourcePath, destPath);
+                                foundAlternative = true;
+                                break;
+                            }
+                        }
+                        
+                        if (foundAlternative) {
+                            logger.info(`Successfully created substitute for ${native}`);
+                        } else {
+                            // Check for case-insensitive matches in the directory
+                            const existingFiles = await fs.readdir(nativesDir);
+                            const matchingFile = existingFiles.find(file => 
+                                file.toLowerCase() === nativeLower
+                            );
+                            
+                            if (matchingFile) {
+                                logger.info(`Found case-variant of ${native}: ${matchingFile}`);
+                                // If needed, create a copy with the exact name
+                                if (matchingFile !== native) {
+                                    await fs.copyFile(
+                                        path.join(nativesDir, matchingFile),
+                                        path.join(nativesDir, native)
+                                    );
+                                    logger.info(`Created exact name copy for ${native}`);
+                                }
+                            } else {
+                                logger.warn(`Could not find ${native} in downloaded package`);
+                            }
+                        }
+                    }
+                } catch (error) {
+                    logger.error(`Failed to download fallback for ${native}: ${error.message}`);
+                }
+            }
+        }
+
+        // Final verification step - check if all required natives exist now
+        for (const native of missingNatives) {
+            const nativePath = path.join(nativesDir, native);
+            if (!await fs.pathExists(nativePath)) {
+                // Check case-insensitive variants as a last resort
+                const existingFiles = await fs.readdir(nativesDir);
+                
+                // First look for exact matches with different casing
+                let matchingFile = existingFiles.find(file => 
+                    file.toLowerCase() === native.toLowerCase()
+                );
+                
+                // If no exact match, look for alternative variants
+                if (!matchingFile) {
+                    const alternativeFiles = nativeAlternatives[native.toLowerCase()] || [];
+                    for (const altFile of alternativeFiles) {
+                        const altMatch = existingFiles.find(file => 
+                            file.toLowerCase() === altFile.toLowerCase()
+                        );
+                        if (altMatch) {
+                            matchingFile = altMatch;
+                            logger.info(`Found alternative ${matchingFile} for ${native}`);
+                            break;
+                        }
+                    }
+                }
+                
+                if (matchingFile) {
+                    // Create a copy with the exact expected name
+                    await fs.copyFile(
+                        path.join(nativesDir, matchingFile),
+                        nativePath
+                    );
+                    logger.info(`Final step: Created exact copy of ${matchingFile} as ${native}`);
+                }
+            }
+        }
+    }
+
+    getArchName() {
+        if (process.platform === 'win32') {
+            return process.arch === 'x64' ? '64' : '32';
+        }
+        return process.arch === 'arm64' ? 'arm64' : 'x86_64';
+    }
+
+    matchRules(rules) {
+        const osName = this.getOSName();
+        
+        for (const rule of rules) {
+            let action = rule.action === 'allow';
+            
+            if (rule.os) {
+                const osMatches = rule.os.name === osName;
+                
+                if (rule.os.arch) {
+                    const archMatches = rule.os.arch === this.getArchName();
+                    if (!archMatches) continue;
+                }
+                
+                if (action === true && !osMatches) action = false;
+                if (action === false && !osMatches) action = true;
+            }
+            
+            if (!action) return false;
+        }
+        
+        return true;
+    }
+
+    async isValidFile(filePath, expectedSha1) {
+        try {
+            if (!filePath || typeof filePath !== 'string') {
+                logger.warn(`Invalid file path provided for validation: ${filePath}`);
+                return false;
+            }
+            
+            if (!fs.existsSync(filePath)) return false;
+            
+            if (expectedSha1) {
+                try {
+                    const crypto = require('crypto');
+                    const fileData = await fs.readFile(filePath);
+                    const hash = crypto.createHash('sha1').update(fileData).digest('hex');
+                    return hash === expectedSha1;
+                } catch (err) {
+                    logger.warn(`SHA1 validation failed for ${filePath}: ${err.message}`);
+                    return false;
+                }
+            }
+            
+            return true;
+        } catch (error) {
+            logger.warn(`Error validating file ${filePath}: ${error.message}`);
+            return false;
+        }
     }
 }
 
