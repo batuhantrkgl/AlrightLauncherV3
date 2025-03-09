@@ -8,9 +8,9 @@
   },
   "beta": {
     "version": "3.1.0-beta",
-    "downloadUrl": "https://github.com/batuhantrkgl/AlrightLauncher/releases/download/v1.1.0-beta/AlrightLauncher-Setup-1.1.0-beta.exe",
+    "downloadUrl": "https://github.com/batuhantrkgl/AlrightLauncher/releases/download/latest/AlrightLauncher-Setup-*.exe",
     "sha256": "",
-    "releaseDate": "2023-07-20",
+    "releaseDate": "",
     "releaseNotes": "# Beta Features\n- New server management UI\n- Experimental mod support\n- Testing new update mechanism"
   }
 }

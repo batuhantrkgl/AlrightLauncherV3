@@ -4,6 +4,7 @@ const fetch = require('node-fetch');
 const logger = require('./logger');
 const extract = require('extract-zip');
 const cliProgress = require('cli-progress');
+const AdmZip = require('adm-zip'); // Add this import
 
 class MinecraftInstaller {
     constructor() {
@@ -235,9 +236,9 @@ class MinecraftInstaller {
         await fs.ensureDir(nativesDir);
         await fs.emptyDir(nativesDir);
 
-        // Handle modern Minecraft versions (1.20 and 1.21)
+        // Handle specific modern Minecraft versions (1.20, 1.21)
         if (versionData.id === '1.20' || versionData.id === '1.21') {
-            logger.info(`Detected modern Minecraft ${versionData.id}, using specialized native extraction`);
+            logger.info(`Detected modern Minecraft ${versionData.id} using specialized native extraction`);
             try {
                 // Use the launcher's specialized extraction method for 1.20/1.21
                 const launcher = new (require('./minecraft-launcher'))(this.baseDir);
@@ -255,32 +256,43 @@ class MinecraftInstaller {
             }
         }
 
-        // Continue with regular native extraction for older versions
-        // Updated natives list to match newer Minecraft structure
-        const requiredNatives = [
-            'lwjgl.dll',
-            'lwjgl32.dll',
-            'lwjgl64.dll',
-            'lwjgl_opengl.dll',
-            'lwjgl_opengl32.dll',
-            'lwjgl_stb.dll',
-            'lwjgl_stb32.dll',
-            'lwjgl_tinyfd.dll',
-            'lwjgl_tinyfd32.dll',
-            'OpenAL.dll',
-            'OpenAL32.dll',
-            'glfw.dll',
-            'glfw32.dll',
-            'jemalloc.dll',
-            'jemalloc32.dll'
-        ];
+        // Use version-specific native requirements
+        let requiredNatives = [];
+
+        // Determine required natives based on version
+        if (versionData.id.startsWith('1.19') || versionData.id === '1.19') {
+            // For Minecraft 1.19.x with LWJGL 3.3.1
+            requiredNatives = [
+                'lwjgl.dll',
+                'lwjgl32.dll',
+                'lwjgl_openal.dll',
+                'lwjgl_stb.dll',
+                'lwjgl_tinyfd.dll'
+            ];
+            logger.info(`Using 1.19.x native requirements for ${versionData.id}`);
+        } else {
+            // Default natives list for older versions
+            requiredNatives = [
+                'lwjgl.dll',
+                'lwjgl32.dll', 
+                'lwjgl64.dll',
+                'OpenAL.dll',
+                'OpenAL32.dll',
+                'glfw.dll',
+                'glfw32.dll',
+                'jemalloc.dll',
+                'jemalloc32.dll'
+            ];
+        }
 
         const extractedNatives = new Map();
         const processedNatives = new Set();
 
+        // Process all libraries to extract needed natives
         for (const lib of versionData.libraries) {
             if (!this.isLibraryCompatible(lib)) continue;
 
+            // Process libraries with native components
             if (lib.natives) {
                 const nativeKey = lib.natives.windows?.replace('${arch}', '64') || 
                                 lib.natives['windows'];
@@ -299,22 +311,35 @@ class MinecraftInstaller {
                     await extract(nativePath, {
                         dir: nativesDir,
                         onEntry: (entry) => {
-                            // Updated extraction logic
-                            const isValidNative = (
-                                entry.fileName.endsWith('.dll') && 
-                                !entry.fileName.includes('META-INF/') &&
-                                (
-                                    requiredNatives.some(name => 
-                                        entry.fileName.toLowerCase() === name.toLowerCase()
-                                    ) ||
-                                    entry.fileName.includes('SAPIWrapper')  // Include SAPI wrappers
-                                )
-                            );
-                            
-                            if (isValidNative) {
-                                logger.info(`Extracting verified native: ${entry.fileName}`);
-                                extractedNatives.set(entry.fileName.toLowerCase(), entry);
-                                return true;
+                            // Improved extraction logic for LWJGL 3.3.1 (Minecraft 1.19.x)
+                            if (versionData.id.startsWith('1.19') || versionData.id === '1.19') {
+                                // For 1.19.x: Extract all .dll files
+                                const isValidNative = entry.fileName.endsWith('.dll') && 
+                                                    !entry.fileName.includes('META-INF/');
+                                
+                                if (isValidNative) {
+                                    logger.info(`Extracting 1.19.x native: ${entry.fileName}`);
+                                    extractedNatives.set(entry.fileName.toLowerCase(), entry);
+                                    return true;
+                                }
+                            } else {
+                                // For other versions: Use the original filtering
+                                const isValidNative = (
+                                    entry.fileName.endsWith('.dll') && 
+                                    !entry.fileName.includes('META-INF/') &&
+                                    (
+                                        requiredNatives.some(name => 
+                                            entry.fileName.toLowerCase() === name.toLowerCase()
+                                        ) ||
+                                        entry.fileName.includes('SAPIWrapper')
+                                    )
+                                );
+                                
+                                if (isValidNative) {
+                                    logger.info(`Extracting verified native: ${entry.fileName}`);
+                                    extractedNatives.set(entry.fileName.toLowerCase(), entry);
+                                    return true;
+                                }
                             }
 
                             // Also extract .git and .sha1 files for completeness
@@ -331,22 +356,215 @@ class MinecraftInstaller {
             }
         }
 
-        // Verify essential natives were extracted
-        const essentialNatives = [
-            'lwjgl.dll',
-            'OpenAL.dll',
-            'OpenAL32.dll'
-        ];
+        // For 1.19.x, make a second pass to check if we have any of the known LWJGL DLLs
+        if ((versionData.id.startsWith('1.19') || versionData.id === '1.19') && extractedNatives.size === 0) {
+            logger.info('No natives extracted on first pass for 1.19.x, attempting special extraction');
+            
+            // Enhanced LWJGL library detection for 1.19.x
+            // First look for libraries with "lwjgl" in their name
+            const lwjglLibs = versionData.libraries.filter(lib => 
+                (lib.name.startsWith('org.lwjgl:lwjgl') || lib.name.includes('lwjgl')) && 
+                lib.downloads?.classifiers
+            );
+            
+            // Log all available LWJGL libraries
+            logger.info(`Found ${lwjglLibs.length} LWJGL libraries for manual extraction`);
+            for (const lib of lwjglLibs) {
+                logger.info(`LWJGL lib: ${lib.name}`);
+            }
 
-        const missingEssentials = essentialNatives.filter(native => 
-            !extractedNatives.has(native.toLowerCase()) &&
-            !extractedNatives.has(native.replace('.dll', '32.dll').toLowerCase()) &&
-            !extractedNatives.has(native.replace('.dll', '64.dll').toLowerCase())
-        );
+            // Try all possible native classifier keys
+            const possibleNativeKeys = [
+                'natives-windows',
+                'natives-windows-x86_64',
+                'natives-windows-amd64',
+                'natives-windows-arm64',
+                'natives-windows-x86'
+            ];
+            
+            let extractedAny = false;
+            
+            // Process each LWJGL library
+            for (const lib of lwjglLibs) {
+                for (const nativeKey of possibleNativeKeys) {
+                    if (lib.downloads?.classifiers?.[nativeKey]) {
+                        const nativeArtifact = lib.downloads.classifiers[nativeKey];
+                        const nativePath = path.join(this.librariesDir, nativeArtifact.path);
+                        
+                        // Download if missing
+                        if (!await fs.pathExists(nativePath)) {
+                            logger.info(`Downloading missing 1.19.1 native: ${nativeArtifact.url}`);
+                            try {
+                                await fs.ensureDir(path.dirname(nativePath));
+                                const response = await fetch(nativeArtifact.url);
+                                if (!response.ok) {
+                                    logger.warn(`Failed to download native: ${response.statusText}`);
+                                    continue;
+                                }
+                                const buffer = await response.buffer();
+                                await fs.writeFile(nativePath, buffer);
+                                logger.info(`Successfully downloaded native: ${nativePath}`);
+                            } catch (err) {
+                                logger.error(`Download failed: ${err.message}`);
+                                continue;
+                            }
+                        }
+                        
+                        // Extract native
+                        if (await fs.pathExists(nativePath)) {
+                            try {
+                                logger.info(`Extracting special LWJGL native from: ${nativePath}`);
+                                
+                                // Use AdmZip for more reliable extraction
+                                const zip = new AdmZip(nativePath);
+                                const entries = zip.getEntries();
+                                
+                                // Count DLLs before extraction
+                                const dllEntries = entries.filter(entry => 
+                                    entry.entryName.endsWith('.dll') && 
+                                    !entry.entryName.includes('META-INF/')
+                                );
+                                
+                                logger.info(`Found ${dllEntries.length} DLLs in ${nativePath}`);
+                                
+                                // Extract all DLL files
+                                for (const entry of dllEntries) {
+                                    const fileName = path.basename(entry.entryName);
+                                    logger.info(`Extracting: ${fileName}`);
+                                    zip.extractEntryTo(entry.entryName, nativesDir, false, true);
+                                    extractedNatives.set(fileName.toLowerCase(), entry);
+                                    extractedAny = true;
+                                }
+                            } catch (err) {
+                                logger.error(`Extract error: ${err.message}`);
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // If still no extraction succeeded, try searching for files directly
+            if (!extractedAny) {
+                logger.info('Special extraction failed, trying direct path search for LWJGL natives');
+                
+                // Directly search for LWJGL native JARs in the libraries directory
+                const lwjglDirPaths = [
+                    path.join(this.librariesDir, 'org', 'lwjgl'),
+                    path.join(this.librariesDir, 'org', 'lwjgl3')
+                ];
+                
+                for (const lwjglDir of lwjglDirPaths) {
+                    if (await fs.pathExists(lwjglDir)) {
+                        try {
+                            const lwjglSubdirs = await fs.readdir(lwjglDir);
+                            
+                            for (const subdir of lwjglSubdirs) {
+                                const subdirPath = path.join(lwjglDir, subdir);
+                                if ((await fs.stat(subdirPath)).isDirectory()) {
+                                    const versionDirs = await fs.readdir(subdirPath);
+                                    
+                                    for (const versionDir of versionDirs) {
+                                        const versionPath = path.join(subdirPath, versionDir);
+                                        if (!(await fs.stat(versionPath)).isDirectory()) continue;
+                                        
+                                        // Look for native JAR files
+                                        const files = await fs.readdir(versionPath);
+                                        const nativeJars = files.filter(file => 
+                                            file.endsWith('.jar') && 
+                                            file.includes('natives-windows')
+                                        );
+                                        
+                                        if (nativeJars.length > 0) {
+                                            logger.info(`Found ${nativeJars.length} native JARs in ${versionPath}`);
+                                            
+                                            // Extract natives from each JAR
+                                            for (const jarFile of nativeJars) {
+                                                const jarPath = path.join(versionPath, jarFile);
+                                                try {
+                                                    logger.info(`Attempting extraction from: ${jarFile}`);
+                                                    const zip = new AdmZip(jarPath);
+                                                    
+                                                    // Extract all DLL files
+                                                    for (const entry of zip.getEntries()) {
+                                                        if (entry.entryName.endsWith('.dll') && !entry.entryName.includes('META-INF/')) {
+                                                            const fileName = path.basename(entry.entryName);
+                                                            zip.extractEntryTo(entry.entryName, nativesDir, false, true);
+                                                            logger.info(`Extracted direct: ${fileName}`);
+                                                            extractedNatives.set(fileName.toLowerCase(), {fileName: entry.entryName});
+                                                            extractedAny = true;
+                                                        }
+                                                    }
+                                                } catch (err) {
+                                                    logger.error(`Extraction error for ${jarFile}: ${err.message}`);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        } catch (err) {
+                            logger.error(`Error searching LWJGL directory: ${err.message}`);
+                        }
+                    }
+                }
+            }
+            
+            // As a last resort, copy prepackaged natives
+            if (!extractedAny) {
+                logger.info('All extraction attempts failed for 1.19.x natives');
+                
+                // Try using extract-zip as a fallback
+                const foundNativeJars = await this.findAllLwjglNatives();
+                for (const jarPath of foundNativeJars) {
+                    try {
+                        logger.info(`Fallback: Trying extract-zip for ${path.basename(jarPath)}`);
+                        await extract(jarPath, {
+                            dir: nativesDir,
+                            onEntry: (entry) => {
+                                if (entry.fileName.endsWith('.dll') && !entry.fileName.includes('META-INF/')) {
+                                    const fileName = path.basename(entry.fileName);
+                                    logger.info(`Fallback extracted: ${fileName}`);
+                                    extractedNatives.set(fileName.toLowerCase(), entry);
+                                    return true;
+                                }
+                                return false;
+                            }
+                        });
+                    } catch (err) {
+                        logger.error(`Fallback extraction failed: ${err.message}`);
+                    }
+                }
+            }
+        }
 
-        if (missingEssentials.length > 0) {
-            logger.error(`Missing essential natives: ${missingEssentials.join(', ')}`);
-            throw new Error(`Missing essential natives: ${missingEssentials.join(', ')}`);
+        // For 1.19.x versions, don't enforce specific native files - just check if we extracted any DLLs
+        const extractedNativesList = [...extractedNatives.keys()];
+        logger.info(`Extracted natives: ${extractedNativesList.join(', ')}`);
+
+        if (versionData.id.startsWith('1.19') || versionData.id === '1.19') {
+            // For 1.19.x, just check if we extracted some DLLs
+            if (extractedNativesList.length === 0) {
+                logger.error('No native DLLs were extracted for 1.19.x');
+                throw new Error('Failed to extract any native DLLs');
+            }
+        } else {
+            // For other versions, check for specific essential natives
+            const essentialNatives = [
+                'lwjgl.dll',
+                'OpenAL.dll',
+                'OpenAL32.dll'
+            ];
+
+            const missingEssentials = essentialNatives.filter(native => 
+                !extractedNatives.has(native.toLowerCase()) &&
+                !extractedNatives.has(native.replace('.dll', '32.dll').toLowerCase()) &&
+                !extractedNatives.has(native.replace('.dll', '64.dll').toLowerCase())
+            );
+
+            if (missingEssentials.length > 0) {
+                logger.error(`Missing essential natives: ${missingEssentials.join(', ')}`);
+                throw new Error(`Missing essential natives: ${missingEssentials.join(', ')}`);
+            }
         }
 
         // Set permissions for extracted files
@@ -652,6 +870,51 @@ class MinecraftInstaller {
         }
 
         return downloadCount;
+    }
+
+    // Add helper method to find all LWJGL native JARs
+    async findAllLwjglNatives() {
+        const nativeJars = [];
+        const searchDir = this.librariesDir;
+
+        try {
+            // Look for org/lwjgl directory
+            const lwjglPath = path.join(searchDir, 'org', 'lwjgl');
+            
+            if (!await fs.pathExists(lwjglPath)) {
+                return nativeJars;
+            }
+            
+            const lwjglSubdirs = await fs.readdir(lwjglPath);
+            
+            for (const lwjglLib of lwjglSubdirs) {
+                const libPath = path.join(lwjglPath, lwjglLib);
+                if (!await fs.pathExists(libPath) || !(await fs.stat(libPath)).isDirectory()) {
+                    continue;
+                }
+                
+                // Check each version directory
+                const versionDirs = await fs.readdir(libPath);
+                for (const version of versionDirs) {
+                    const versionPath = path.join(libPath, version);
+                    if (!await fs.pathExists(versionPath) || !(await fs.stat(versionPath)).isDirectory()) {
+                        continue;
+                    }
+                    
+                    // Look for native JARs
+                    const files = await fs.readdir(versionPath);
+                    for (const file of files) {
+                        if (file.includes('natives-windows') && file.endsWith('.jar')) {
+                            nativeJars.push(path.join(versionPath, file));
+                        }
+                    }
+                }
+            }
+        } catch (err) {
+            logger.error(`Error searching for native JARs: ${err.message}`);
+        }
+        
+        return nativeJars;
     }
 }
 
