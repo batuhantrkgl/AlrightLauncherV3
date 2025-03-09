@@ -245,6 +245,18 @@ function registerIpcHandlers() {
                         message: code === 0 ? 'normal exit' : 'error exit'
                     });
                 }
+                
+                // Ensure launcher is shown when game exits
+                if (mainWindow && !mainWindow.isDestroyed()) {
+                    if (process.platform === 'win32') {
+                        // mainWindow.setSkipTaskbar(false);
+                        mainWindow.restore();
+                        mainWindow.focus();
+                    } else {
+                        mainWindow.show();
+                        mainWindow.focus();
+                    }
+                }
             });
 
             return { success: true, pid: result.pid };
@@ -452,6 +464,41 @@ function registerIpcHandlers() {
             console.error('Error installing update:', error);
             return { error: error.message };
         }
+    });
+
+    // Add window management handlers
+    ipcMain.handle('hide-window', () => {
+        if (!mainWindow) return false;
+        
+        // On Windows, minimize to taskbar
+        if (process.platform === 'win32') {
+            mainWindow.minimize();
+            // Optional: Hide from taskbar
+            // mainWindow.setSkipTaskbar(true);
+        } else {
+            // On other platforms, hide the window
+            mainWindow.hide();
+        }
+        
+        console.log('Launcher hidden while game is running');
+        return true;
+    });
+
+    ipcMain.handle('show-window', () => {
+        if (!mainWindow) return false;
+        
+        // Restore window visibility
+        if (process.platform === 'win32') {
+            // mainWindow.setSkipTaskbar(false);
+            mainWindow.restore();
+        } else {
+            mainWindow.show();
+        }
+        
+        // Make sure window is focused
+        mainWindow.focus();
+        console.log('Launcher restored after game closed');
+        return true;
     });
 
     // Remove authentication-related handlers

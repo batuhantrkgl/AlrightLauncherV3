@@ -659,9 +659,15 @@ window.addEventListener('DOMContentLoaded', async () => {
     }
 });
 
+// Add these global variables at the top of the file
+let gameRunning = false;
+let launchInProgress = false;
+
+// Update the playGame function to disable UI during launch
 async function playGame() {
-    if (isOperationInProgress) return;
+    if (isOperationInProgress || gameRunning || launchInProgress) return;
     
+    launchInProgress = true;
     const version = document.getElementById('version').textContent;
     const username = document.getElementById('username').textContent;
     
@@ -670,6 +676,9 @@ async function playGame() {
     localStorage.setItem('lastVersion', version);
     
     try {
+        // Disable all UI elements
+        disableAllControls(true);
+        
         showProgress(true);
         updateProgress(0, 'Preparing to launch...');
         
@@ -709,16 +718,82 @@ async function playGame() {
         
         if (launched.success) {
             updateProgress(100, 'Game launched successfully!');
-            setTimeout(() => showProgress(false), 1000);
+            gameRunning = true;
+            
+            // Hide progress overlay
+            setTimeout(() => {
+                showProgress(false);
+                
+                // Hide the launcher after a short delay
+                setTimeout(() => {
+                    window.minecraft.ipc.invoke('hide-window');
+                    window.minecraft.logger.info('Launcher hidden while game is running');
+                }, 2000); // 2-second delay before hiding
+            }, 1000);
         } else {
             throw new Error(launched.error || 'Failed to launch game');
         }
         
     } catch (error) {
         updateProgress(100, 'Error', error.message);
-        setTimeout(() => showProgress(false), 2000);
+        setTimeout(() => {
+            showProgress(false);
+            disableAllControls(false); // Re-enable controls
+        }, 2000);
+    } finally {
+        launchInProgress = false;
     }
 }
+
+// Add function to disable all UI controls
+function disableAllControls(disable = true) {
+    // Disable version dropdown
+    const versionElement = document.getElementById('version');
+    versionElement.style.pointerEvents = disable ? 'none' : 'auto';
+    versionElement.style.opacity = disable ? '0.7' : '1';
+    
+    // Disable username editing
+    const username = document.getElementById('username');
+    username.contentEditable = disable ? 'false' : 'true';
+    username.style.opacity = disable ? '0.7' : '1';
+    
+    // Disable play button
+    const playButton = document.querySelector('.play-button');
+    playButton.disabled = disable;
+    playButton.textContent = disable ? (gameRunning ? 'Game Running' : 'Launching...') : 'Play';
+    
+    // Disable settings/debug toggles
+    const debugToggle = document.querySelector('.debug-toggle');
+    if (debugToggle) {
+        debugToggle.disabled = disable;
+        debugToggle.style.opacity = disable ? '0.5' : '1';
+    }
+}
+
+// Add event listeners for game status changes
+window.minecraft.onGameClose((data) => {
+    // Map common exit codes
+    const exitCodes = {
+        0: 'normal exit',
+        1: 'error exit',
+        3489660927: 'crash or force close'
+    };
+
+    const exitMessage = exitCodes[data.code] || `unknown exit code ${data.code}`;
+    
+    if (data.code === 0) {
+        window.minecraft.logger.info(`Game closed normally: ${data.version}`);
+    } else {
+        window.minecraft.logger.warn(`Game closed with ${exitMessage}: ${data.version}`);
+    }
+    
+    // Re-enable all controls
+    gameRunning = false;
+    disableAllControls(false);
+    
+    // Show the launcher window
+    window.minecraft.ipc.invoke('show-window');
+});
 
 // Attach play button click handler
 document.querySelector('.play-button').addEventListener('click', playGame);

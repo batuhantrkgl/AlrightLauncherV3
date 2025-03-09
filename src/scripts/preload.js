@@ -72,7 +72,9 @@ contextBridge.exposeInMainWorld('minecraft', {
                 'create-standalone',
                 'download-java',
                 'verify-game-files',
-                'get-installed-versions'
+                'get-installed-versions',
+                'hide-window',      // Add this channel
+                'show-window'       // Add this channel
             ];
             if (validChannels.includes(channel)) {
                 return safeIpcInvoke(channel, ...args);

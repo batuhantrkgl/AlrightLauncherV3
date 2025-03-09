@@ -173,6 +173,19 @@ body {
     animation: shine 3s infinite;
 }
 
+.play-button:disabled {
+    background-color: #666;
+    color: #999;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
+    animation: none;
+}
+
+.play-button:disabled::before {
+    display: none;
+}
+
 @keyframes pulse {
     0% { transform: scale(1); }
     50% { transform: scale(1.02); }
