@@ -129,6 +129,37 @@ contextBridge.exposeInMainWorld('minecraft', {
                 ipcRenderer.on('update-download-progress', (_, data) => callback(data));
             }
         }
+    },
+    soundRepair: {
+        repairSounds: (version) => safeIpcInvoke('repair-sound-assets', version)
+    },
+    // Add profile management methods
+    profiles: {
+        get: () => ipcRenderer.invoke('get-profiles'),
+        create: (profileData) => ipcRenderer.invoke('create-profile', profileData),
+        update: (id, profileData) => ipcRenderer.invoke('update-profile', { id, profileData }),
+        delete: (id) => ipcRenderer.invoke('delete-profile', id),
+        setDefault: (id) => ipcRenderer.invoke('set-default-profile', id),
+        ensureCreated: () => ipcRenderer.invoke('ensure-profiles-created')
+    },
+    // Add modloader methods
+    modloaders: {
+        getForgeVersions: (minecraftVersion) => ipcRenderer.invoke('get-forge-versions', minecraftVersion),
+        getFabricVersions: () => ipcRenderer.invoke('get-fabric-versions'),
+        getFabricGameVersions: () => ipcRenderer.invoke('get-fabric-game-versions'),
+        installFabric: (minecraftVersion, loaderVersion) => 
+            ipcRenderer.invoke('install-fabric', { minecraftVersion, loaderVersion }),
+        installForge: (minecraftVersion, forgeVersion) => 
+            ipcRenderer.invoke('install-forge', { minecraftVersion, forgeVersion })
+    },
+    assets: {
+        download: (version) => safeIpcInvoke('download-assets', version),
+        setupIcons: (version) => safeIpcInvoke('setup-game-icons', version),
+        onDownloadProgress: (callback) => {
+            if (typeof callback === 'function') {
+                ipcRenderer.on('asset-download-progress', (_, data) => callback(data));
+            }
+        }
     }
 });
 

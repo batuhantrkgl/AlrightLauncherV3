@@ -157,35 +157,241 @@ class MinecraftInstaller extends EventEmitter { // Extend EventEmitter
     }
 
     async downloadAssets(versionData) {
+        logger.info('Downloading asset index and resources...');
         const assetIndexUrl = versionData.assetIndex.url;
-        const assetIndexPath = path.join(this.assetsDir, 'indexes', `${versionData.assetIndex.id}.json`);
+        const assetIndexId = versionData.assetIndex.id;
+        const assetIndexPath = path.join(this.assetsDir, 'indexes', `${assetIndexId}.json`);
         
         // Create assets directories
-        fs.mkdirSync(path.join(this.assetsDir, 'indexes'), { recursive: true });
-        fs.mkdirSync(path.join(this.assetsDir, 'objects'), { recursive: true });
+        await fs.ensureDir(path.join(this.assetsDir, 'indexes'));
+        await fs.ensureDir(path.join(this.assetsDir, 'objects'));
+        await fs.ensureDir(path.join(this.assetsDir, 'virtual', assetIndexId));
+        
+        // Download asset index if needed
+        if (!await fs.pathExists(assetIndexPath) || !(await this.verifyFile(assetIndexPath, versionData.assetIndex.sha1))) {
+            logger.info(`Downloading asset index ${assetIndexId}...`);
+            const indexResponse = await fetch(assetIndexUrl);
+            if (!indexResponse.ok) {
+                throw new Error(`Failed to download asset index: ${indexResponse.statusText}`);
+            }
+            const assetIndex = await indexResponse.json();
+            await fs.writeFile(assetIndexPath, JSON.stringify(assetIndex, null, 2));
+        }
 
-        // Download asset index
-        logger.info('Downloading asset index...');
-        const indexResponse = await fetch(assetIndexUrl);
-        const assetIndex = await indexResponse.json();
-        fs.writeFileSync(assetIndexPath, JSON.stringify(assetIndex, null, 2));
+        // Read the asset index
+        const assetIndexContent = await fs.readFile(assetIndexPath, 'utf8');
+        const assetIndex = JSON.parse(assetIndexContent);
+        
+        // Track missing sound assets for targeted downloads
+        const missingSounds = new Set();
+        
+        // Check if this is a "virtual" asset index (used in newer MC versions)
+        const isVirtual = assetIndex.virtual === true;
+        
+        // Process and download all assets
+        const assets = Object.entries(assetIndex.objects);
+        const totalAssets = assets.length;
+        let processedAssets = 0;
+        let missingAssets = 0;
 
-        // Download assets
-        logger.info('Downloading game assets...');
-        const assets = assetIndex.objects;
-        for (const [name, asset] of Object.entries(assets)) {
+        // First pass: count sound assets for reporting
+        const soundAssets = assets.filter(([name]) => name.startsWith('minecraft/sounds/'));
+        logger.info(`Found ${soundAssets.length} sound assets in index ${assetIndexId}`);
+        
+        // Download or verify assets with progress tracking
+        for (const [name, asset] of assets) {
+            processedAssets++;
+            const progress = Math.floor((processedAssets / totalAssets) * 100);
+            
+            if (processedAssets % 20 === 0 || processedAssets === totalAssets) {
+                await this.sendProgress(
+                    60 + (progress * 0.35),
+                    'Processing Assets', 
+                    `${processedAssets}/${totalAssets} (${progress}%)`
+                );
+            }
+
             const hash = asset.hash;
             const prefix = hash.substring(0, 2);
-            const assetDir = path.join(this.assetsDir, 'objects', prefix);
-            const assetPath = path.join(assetDir, hash);
-
-            // Ensure the directory exists
-            fs.mkdirSync(assetDir, { recursive: true });
-
-            if (!fs.existsSync(assetPath)) {
+            const assetObjectPath = path.join(this.assetsDir, 'objects', prefix, hash);
+            
+            // Create directory for this asset if needed
+            await fs.ensureDir(path.dirname(assetObjectPath));
+            
+            // Also prepare virtual directory path if needed
+            let virtualPath = null;
+            if (isVirtual && name.startsWith('minecraft/')) {
+                virtualPath = path.join(this.assetsDir, 'virtual', assetIndexId, name);
+                await fs.ensureDir(path.dirname(virtualPath));
+            }
+            
+            // Check if we need to download this asset
+            const needsDownload = !await fs.pathExists(assetObjectPath) || 
+                                  !(await this.verifyAssetFile(assetObjectPath, hash));
+            
+            if (needsDownload) {
+                // Track missing sound assets
+                if (name.startsWith('minecraft/sounds/')) {
+                    missingSounds.add(name);
+                }
+                
+                // Construct the download URL
                 const assetUrl = `https://resources.download.minecraft.net/${prefix}/${hash}`;
-                await this.downloadFile(assetUrl, assetPath, `Asset: ${name}`);
-                logger.info(`Downloaded asset: ${name}`);
+                
+                try {
+                    // Download the asset
+                    await this.downloadFile(
+                        assetUrl,
+                        assetObjectPath,
+                        `Asset: ${name.split('/').pop()}`
+                    );
+                    
+                    // Link/copy to virtual directory if needed
+                    if (virtualPath) {
+                        try {
+                            // First ensure the parent directory exists
+                            await fs.ensureDir(path.dirname(virtualPath));
+                            
+                            // Try to create a hard link to save space
+                            try {
+                                await fs.link(assetObjectPath, virtualPath);
+                            } catch (linkError) {
+                                // If linking fails (e.g., different file systems), copy the file
+                                await fs.copyFile(assetObjectPath, virtualPath);
+                            }
+                        } catch (virtualError) {
+                            logger.warn(`Failed to create virtual asset at ${virtualPath}: ${virtualError.message}`);
+                        }
+                    }
+                } catch (downloadError) {
+                    missingAssets++;
+                    logger.warn(`Failed to download asset ${name}: ${downloadError.message}`);
+                }
+            } else if (virtualPath && !await fs.pathExists(virtualPath)) {
+                // Asset exists in objects but not in virtual - create the virtual reference
+                try {
+                    // Ensure the parent directory exists
+                    await fs.ensureDir(path.dirname(virtualPath));
+                    
+                    // Try to create a hard link to save space
+                    try {
+                        await fs.link(assetObjectPath, virtualPath);
+                    } catch (linkError) {
+                        // If linking fails, copy the file
+                        await fs.copyFile(assetObjectPath, virtualPath);
+                    }
+                } catch (virtualError) {
+                    logger.warn(`Failed to create virtual asset at ${virtualPath}: ${virtualError.message}`);
+                }
+            }
+        }
+        
+        // Log summary of asset processing
+        logger.info(`Asset processing complete: ${totalAssets - missingAssets}/${totalAssets} assets verified`);
+        if (missingAssets > 0) {
+            logger.warn(`${missingAssets} assets could not be downloaded`);
+        }
+        
+        // If missing sound assets were detected, attempt targeted repairs
+        if (missingSounds.size > 0) {
+            logger.info(`Attempting targeted repair for ${missingSounds.size} missing sound assets`);
+            await this.repairMissingSoundAssets(Array.from(missingSounds), assetIndex, assetIndexId);
+        }
+        
+        return { totalAssets, missingAssets };
+    }
+
+    async verifyAssetFile(filePath, expectedHash) {
+        try {
+            if (!await fs.pathExists(filePath)) return false;
+            
+            const fileBuffer = await fs.readFile(filePath);
+            const crypto = require('crypto');
+            const fileHash = crypto.createHash('sha1').update(fileBuffer).digest('hex');
+            
+            return fileHash === expectedHash;
+        } catch (error) {
+            logger.warn(`Error verifying asset file ${filePath}: ${error.message}`);
+            return false;
+        }
+    }
+
+    // New method to handle missing sound assets specifically
+    async repairMissingSoundAssets(missingSounds, assetIndex, assetIndexId) {
+        if (missingSounds.length === 0) return;
+        
+        // Sort sounds by category for better logging
+        const soundsByCategory = {};
+        missingSounds.forEach(sound => {
+            // Extract category from paths like "minecraft/sounds/mob/sheep/say1.ogg"
+            const parts = sound.split('/');
+            if (parts.length >= 4) {
+                const category = parts[2]; // e.g., "mob"
+                if (!soundsByCategory[category]) {
+                    soundsByCategory[category] = [];
+                }
+                soundsByCategory[category].push(sound);
+            }
+        });
+        
+        // Log summary of missing sounds by category
+        logger.info('Missing sounds by category:');
+        for (const [category, sounds] of Object.entries(soundsByCategory)) {
+            logger.info(`${category}: ${sounds.length} sounds`);
+        }
+        
+        // Try alternative download sources if needed
+        const altServers = [
+            'https://resources.download.minecraft.net',
+            'https://launchermeta.mojang.com/mc/assets'
+        ];
+        
+        // For each missing sound file
+        for (const soundPath of missingSounds) {
+            const asset = assetIndex.objects[soundPath];
+            if (!asset) {
+                logger.warn(`Asset info not found for ${soundPath}`);
+                continue;
+            }
+            
+            const hash = asset.hash;
+            const prefix = hash.substring(0, 2);
+            const assetObjectPath = path.join(this.assetsDir, 'objects', prefix, hash);
+            const virtualPath = path.join(this.assetsDir, 'virtual', assetIndexId, soundPath);
+            
+            // Try each download server
+            let downloaded = false;
+            for (const server of altServers) {
+                if (downloaded) break;
+                
+                try {
+                    const assetUrl = `${server}/${prefix}/${hash}`;
+                    logger.info(`Trying alternative source for ${soundPath}: ${assetUrl}`);
+                    
+                    const response = await fetch(assetUrl, { timeout: 5000 });
+                    if (response.ok) {
+                        // Download succeeded
+                        const buffer = await response.arrayBuffer();
+                        await fs.writeFile(assetObjectPath, Buffer.from(buffer));
+                        
+                        // Create virtual path reference if needed
+                        await fs.ensureDir(path.dirname(virtualPath));
+                        try {
+                            await fs.link(assetObjectPath, virtualPath);
+                        } catch {
+                            await fs.copyFile(assetObjectPath, virtualPath);
+                        }
+                        
+                        downloaded = true;
+                        logger.info(`Successfully downloaded missing sound: ${soundPath}`);
+                    }
+                } catch (error) {
+                    logger.warn(`Failed to download from alternate source: ${error.message}`);
+                }
+            }
+            
+            if (!downloaded) {
+                logger.warn(`Could not download sound asset: ${soundPath}`);
             }
         }
     }

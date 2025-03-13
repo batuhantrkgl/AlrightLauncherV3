@@ -92,7 +92,8 @@
     "glob": "^11.0.1",
     "node-fetch": "^2.6.7",
     "path": "^0.12.7",
-    "yauzl": "^3.2.0"
+    "yauzl": "^3.2.0",
+    "uuid": "^9.0.1"
   },
   "devDependencies": {
     "electron": "^28.1.0",

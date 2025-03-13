@@ -529,7 +529,223 @@ function registerIpcHandlers() {
         return true;
     });
 
-    // Remove authentication-related handlers
+    // Add sound repair handler
+    ipcMain.handle('repair-sound-assets', async (event, version) => {
+        try {
+            logger.info(`Sound repair request received for Minecraft ${version}`);
+            const SoundRepairUtility = require('./sound-repair');
+            const soundRepair = new SoundRepairUtility(global.minecraftPath);
+            
+            await soundRepair.initialize();
+            return await soundRepair.repairSoundsForVersion(version);
+        } catch (error) {
+            logger.error(`Sound repair failed: ${error.message}`);
+            return { success: false, error: error.message };
+        }
+    });
+
+    // Profile management handlers
+    ipcMain.handle('get-profiles', async () => {
+        try {
+            const ProfileManager = require('./profile-manager');
+            const profileManager = new ProfileManager(global.minecraftPath);
+            
+            logger.info('Initializing ProfileManager for get-profiles');
+            await profileManager.initialize();
+            
+            const profiles = profileManager.getProfiles();
+            const defaultProfile = profileManager.getDefaultProfile();
+            
+            logger.info(`Retrieved ${Object.keys(profiles).length} profiles successfully`);
+            return {
+                profiles,
+                defaultProfile
+            };
+        } catch (error) {
+            logger.error(`Error getting profiles: ${error.message}`);
+            logger.error(error.stack);
+            return { error: error.message };
+        }
+    });
+
+    ipcMain.handle('create-profile', async (event, profileData) => {
+        try {
+            const ProfileManager = require('./profile-manager');
+            const profileManager = new ProfileManager(global.minecraftPath);
+            await profileManager.initialize();
+            return await profileManager.createProfile(profileData);
+        } catch (error) {
+            logger.error(`Error creating profile: ${error.message}`);
+            return { success: false, error: error.message };
+        }
+    });
+
+    ipcMain.handle('update-profile', async (event, { id, profileData }) => {
+        try {
+            const ProfileManager = require('./profile-manager');
+            const profileManager = new ProfileManager(global.minecraftPath);
+            await profileManager.initialize();
+            return await profileManager.updateProfile(id, profileData);
+        } catch (error) {
+            logger.error(`Error updating profile: ${error.message}`);
+            return { success: false, error: error.message };
+        }
+    });
+
+    ipcMain.handle('delete-profile', async (event, id) => {
+        try {
+            const ProfileManager = require('./profile-manager');
+            const profileManager = new ProfileManager(global.minecraftPath);
+            await profileManager.initialize();
+            return await profileManager.deleteProfile(id);
+        } catch (error) {
+            logger.error(`Error deleting profile: ${error.message}`);
+            return { success: false, error: error.message };
+        }
+    });
+
+    ipcMain.handle('set-default-profile', async (event, id) => {
+        try {
+            const ProfileManager = require('./profile-manager');
+            const profileManager = new ProfileManager(global.minecraftPath);
+            await profileManager.initialize();
+            return await profileManager.setDefaultProfile(id);
+        } catch (error) {
+            logger.error(`Error setting default profile: ${error.message}`);
+            return { success: false, error: error.message };
+        }
+    });
+
+    // Add a new handler to directly create profiles
+    ipcMain.handle('ensure-profiles-created', async () => {
+        try {
+            const ProfileManager = require('./profile-manager');
+            const profileManager = new ProfileManager(global.minecraftPath);
+            
+            logger.info('Force creating profiles via ensure-profiles-created handler');
+            await profileManager.createDefaultProfiles(true); // Force recreation
+            return { success: true };
+        } catch (error) {
+            logger.error(`Error ensuring profiles: ${error.message}`);
+            logger.error(error.stack);
+            return { success: false, error: error.message };
+        }
+    });
+
+    // Modloader handlers
+    ipcMain.handle('get-forge-versions', async (event, minecraftVersion) => {
+        try {
+            const ModLoaderManager = require('./modloader-manager');
+            const modLoaderManager = new ModLoaderManager(global.minecraftPath);
+            return await modLoaderManager.getForgeVersions(minecraftVersion);
+        } catch (error) {
+            logger.error(`Error getting Forge versions: ${error.message}`);
+            return [];
+        }
+    });
+
+    ipcMain.handle('get-fabric-versions', async () => {
+        try {
+            const ModLoaderManager = require('./modloader-manager');
+            const modLoaderManager = new ModLoaderManager(global.minecraftPath);
+            return await modLoaderManager.getFabricVersions();
+        } catch (error) {
+            logger.error(`Error getting Fabric versions: ${error.message}`);
+            return [];
+        }
+    });
+
+    ipcMain.handle('get-fabric-game-versions', async () => {
+        try {
+            const ModLoaderManager = require('./modloader-manager');
+            const modLoaderManager = new ModLoaderManager(global.minecraftPath);
+            return await modLoaderManager.getFabricGameVersions();
+        } catch (error) {
+            logger.error(`Error getting Fabric game versions: ${error.message}`);
+            return [];
+        }
+    });
+
+    ipcMain.handle('install-fabric', async (event, { minecraftVersion, loaderVersion }) => {
+        try {
+            const ModLoaderManager = require('./modloader-manager');
+            const modLoaderManager = new ModLoaderManager(global.minecraftPath);
+            
+            const success = await modLoaderManager.installFabric(minecraftVersion, loaderVersion);
+            
+            if (success) {
+                // Create a profile for the new installation
+                const ProfileManager = require('./profile-manager');
+                const profileManager = new ProfileManager(global.minecraftPath);
+                await profileManager.createFabricProfile(minecraftVersion, loaderVersion);
+            }
+            
+            return { success };
+        } catch (error) {
+            logger.error(`Error installing Fabric: ${error.message}`);
+            return { success: false, error: error.message };
+        }
+    });
+
+    ipcMain.handle('install-forge', async (event, { minecraftVersion, forgeVersion }) => {
+        try {
+            const ModLoaderManager = require('./modloader-manager');
+            const modLoaderManager = new ModLoaderManager(global.minecraftPath);
+            
+            const success = await modLoaderManager.installForge(minecraftVersion, forgeVersion);
+            
+            if (success) {
+                // Create a profile for the new installation
+                const ProfileManager = require('./profile-manager');
+                const profileManager = new ProfileManager(global.minecraftPath);
+                await profileManager.createForgeProfile(minecraftVersion, forgeVersion);
+            }
+            
+            return { success };
+        } catch (error) {
+            logger.error(`Error installing Forge: ${error.message}`);
+            return { success: false, error: error.message };
+        }
+    });
+
+    // Add asset handlers
+    ipcMain.handle('download-assets', async (event, version) => {
+        try {
+            const AssetManager = require('./asset-manager');
+            const assetManager = new AssetManager(global.minecraftPath);
+            
+            await assetManager.initialize();
+            
+            // First download the asset index
+            await assetManager.downloadAssetIndex(version);
+            
+            // Then start downloading assets
+            const result = await assetManager.downloadAssets(version, (progress) => {
+                // Send progress updates to the renderer
+                if (mainWindow && !mainWindow.isDestroyed()) {
+                    mainWindow.webContents.send('asset-download-progress', progress);
+                }
+            });
+            
+            return result;
+        } catch (error) {
+            logger.error(`Error downloading assets: ${error.message}`);
+            return { success: false, error: error.message };
+        }
+    });
+
+    ipcMain.handle('setup-game-icons', async (event, version) => {
+        try {
+            const AssetManager = require('./asset-manager');
+            const assetManager = new AssetManager(global.minecraftPath);
+            
+            await assetManager.initialize();
+            return await assetManager.setupGameIcons(version);
+        } catch (error) {
+            logger.error(`Error setting up game icons: ${error.message}`);
+            return false;
+        }
+    });
 }
 
 async function createWindow() {
