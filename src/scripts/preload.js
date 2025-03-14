@@ -140,7 +140,10 @@ contextBridge.exposeInMainWorld('minecraft', {
         update: (id, profileData) => ipcRenderer.invoke('update-profile', { id, profileData }),
         delete: (id) => ipcRenderer.invoke('delete-profile', id),
         setDefault: (id) => ipcRenderer.invoke('set-default-profile', id),
-        ensureCreated: () => ipcRenderer.invoke('ensure-profiles-created')
+        ensureCreated: () => ipcRenderer.invoke('ensure-profiles-created'),
+        importFromMinecraft: (customPath) => ipcRenderer.invoke('import-minecraft-profiles', customPath),
+        selectMinecraftProfilesPath: () => ipcRenderer.invoke('select-minecraft-profiles-path'),
+        createMissing: () => ipcRenderer.invoke('create-missing-profiles')
     },
     // Add modloader methods
     modloaders: {

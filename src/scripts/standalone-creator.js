@@ -175,10 +175,8 @@ class StandaloneCreator {
         return new Promise((resolve, reject) => {
             const proc = require('child_process').exec(command, options, (error, stdout, stderr) => {
                 if (error) reject(error);
-                else resolve(stdout);
+                else resolve({ stdout, stderr });
             });
-            proc.stdout?.pipe(process.stdout);
-            proc.stderr?.pipe(process.stderr);
         });
     }
 }

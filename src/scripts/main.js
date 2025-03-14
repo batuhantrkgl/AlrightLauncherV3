@@ -180,6 +180,20 @@ function registerIpcHandlers() {
         try {
             logger.info(`Launch request received for Minecraft ${version} with username ${username}`);
             
+            // First ensure a profile exists for this version
+            const ProfileCreator = require('./profile-creator');
+            const profileCreator = new ProfileCreator(global.minecraftPath);
+            
+            logger.info(`Ensuring profile exists for version ${version}`);
+            const profileResult = await profileCreator.ensureProfileExists(version);
+            
+            if (!profileResult.success) {
+                logger.warn(`Could not ensure profile for ${version}: ${profileResult.error}`);
+                // Continue anyway as this is not critical
+            } else if (profileResult.created) {
+                logger.info(`Created new profile for ${version}: ${profileResult.id}`);
+            }
+            
             // Set a timeout for the launch process
             const launchTimeout = setTimeout(() => {
                 logger.error(`Launch timed out for Minecraft ${version}`);
@@ -632,6 +646,46 @@ function registerIpcHandlers() {
         }
     });
 
+    // Add handler for importing profiles from Minecraft launcher
+    ipcMain.handle('import-minecraft-profiles', async (event, customPath = null) => {
+        try {
+            const ProfileManager = require('./profile-manager');
+            const profileManager = new ProfileManager(global.minecraftPath);
+            await profileManager.initialize();
+            
+            logger.info(`Importing Minecraft profiles${customPath ? ' from custom path' : ''}`);
+            const result = await profileManager.importMinecraftProfiles(customPath);
+            
+            return result;
+        } catch (error) {
+            logger.error(`Error importing profiles: ${error.message}`);
+            return { success: false, error: error.message };
+        }
+    });
+
+    // Add handler for selecting custom minecraft profile path
+    ipcMain.handle('select-minecraft-profiles-path', async () => {
+        try {
+            const result = await dialog.showOpenDialog(mainWindow, {
+                title: 'Select launcher_profiles.json',
+                filters: [
+                    { name: 'JSON Files', extensions: ['json'] },
+                    { name: 'All Files', extensions: ['*'] }
+                ],
+                properties: ['openFile']
+            });
+            
+            if (result.canceled) {
+                return { canceled: true };
+            }
+            
+            return { canceled: false, path: result.filePaths[0] };
+        } catch (error) {
+            logger.error(`Error in profile path selection: ${error.message}`);
+            return { canceled: true, error: error.message };
+        }
+    });
+
     // Modloader handlers
     ipcMain.handle('get-forge-versions', async (event, minecraftVersion) => {
         try {
@@ -744,6 +798,20 @@ function registerIpcHandlers() {
         } catch (error) {
             logger.error(`Error setting up game icons: ${error.message}`);
             return false;
+        }
+    });
+
+    // Add handler for auto-creating missing profiles
+    ipcMain.handle('create-missing-profiles', async () => {
+        try {
+            const ProfileCreator = require('./profile-creator');
+            const profileCreator = new ProfileCreator(global.minecraftPath);
+            
+            logger.info('Checking for missing profiles for installed versions');
+            return await profileCreator.createMissingProfiles();
+        } catch (error) {
+            logger.error(`Error creating missing profiles: ${error.message}`);
+            return { success: false, error: error.message };
         }
     });
 }

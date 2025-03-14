@@ -6,13 +6,16 @@ const logger = require('./logger');
 class ProfileManager {
     constructor(baseDir) {
         this.baseDir = baseDir || path.join(process.env.APPDATA, '.alrightlauncher');
-        this.profilesPath = path.join(this.baseDir, 'profile.json');
+        // Change from profile.json to launcher_profiles.json for better compatibility
+        this.profilesPath = path.join(this.baseDir, 'launcher_profiles.json');
         this.profiles = {};
         this.settings = {
             enableSnapshots: false,
             enableBetas: false,
             showGameNews: true,
-            defaultProfile: null
+            defaultProfile: null,
+            keepLauncherOpen: false,
+            crashAssistance: true
         };
         this.initialized = false;
         
@@ -38,23 +41,66 @@ class ProfileManager {
             if (await fs.pathExists(this.profilesPath)) {
                 try {
                     const data = await fs.readJson(this.profilesPath);
-                    this.profiles = data.profiles || {};
-                    this.settings = data.settings || this.settings;
-                    logger.info(`Loaded ${Object.keys(this.profiles).length} profiles from ${this.profilesPath}`);
+                    
+                    // Handle both our format and official launcher format
+                    if (data.profiles) {
+                        this.profiles = data.profiles;
+                        logger.info(`Loaded ${Object.keys(this.profiles).length} profiles from ${this.profilesPath}`);
+                    }
+                    
+                    // Load settings
+                    if (data.settings) {
+                        this.settings = {
+                            ...this.settings,
+                            ...data.settings,
+                            // Keep our custom settings that don't exist in the official launcher
+                            defaultProfile: data.settings.defaultProfile || this.settings.defaultProfile
+                        };
+                    }
+                    
                 } catch (readError) {
-                    logger.error(`Failed to parse profile.json: ${readError.message}`);
+                    logger.error(`Failed to parse launcher_profiles.json: ${readError.message}`);
                     // Continue and recreate profiles
                 }
             } else {
-                // Create a default profiles file
-                logger.info(`No profiles found at ${this.profilesPath}, creating defaults`);
-                await this.createDefaultProfiles();
-                
-                // Verify the file was created
-                if (await fs.pathExists(this.profilesPath)) {
-                    logger.info(`Successfully created profile.json at ${this.profilesPath}`);
+                // Check for old format first
+                const oldProfilesPath = path.join(this.baseDir, 'profile.json');
+                if (await fs.pathExists(oldProfilesPath)) {
+                    try {
+                        logger.info(`Found old profile format at ${oldProfilesPath}, migrating...`);
+                        const oldData = await fs.readJson(oldProfilesPath);
+                        
+                        if (oldData.profiles) {
+                            this.profiles = oldData.profiles;
+                        }
+                        
+                        if (oldData.settings) {
+                            this.settings = {
+                                ...this.settings,
+                                ...oldData.settings
+                            };
+                        }
+                        
+                        // Save in new format
+                        await this.saveProfiles();
+                        
+                        // Rename old file as backup
+                        await fs.rename(oldProfilesPath, path.join(this.baseDir, 'profile.json.bak'));
+                        logger.info('Migration from old profile format completed');
+                    } catch (migrationError) {
+                        logger.error(`Failed to migrate from old profile format: ${migrationError.message}`);
+                    }
                 } else {
-                    throw new Error(`Failed to create profile.json at ${this.profilesPath}`);
+                    // Create default profiles
+                    logger.info(`No profiles found at ${this.profilesPath}, creating defaults`);
+                    await this.createDefaultProfiles();
+                    
+                    // Verify the file was created
+                    if (await fs.pathExists(this.profilesPath)) {
+                        logger.info(`Successfully created launcher_profiles.json at ${this.profilesPath}`);
+                    } else {
+                        throw new Error(`Failed to create launcher_profiles.json at ${this.profilesPath}`);
+                    }
                 }
             }
             
@@ -84,12 +130,13 @@ class ProfileManager {
             }
             
             // Create a default vanilla profile
+            const timestamp = new Date().toISOString();
             const profileId = `vanilla-default-${uuidv4().substring(0, 8)}`;
             this.profiles[profileId] = {
                 name: "Vanilla Latest Release",
-                type: "vanilla",
-                created: new Date().toISOString(),
-                lastUsed: new Date().toISOString(),
+                type: "latest-release",
+                created: timestamp,
+                lastUsed: timestamp,
                 icon: "Grass",
                 gameDir: null, // Use default game directory
                 lastVersionId: "latest-release",
@@ -110,10 +157,11 @@ class ProfileManager {
             // Save the created profiles with direct file writing
             logger.info(`Writing profiles to ${this.profilesPath}`);
             
-            // Try using direct file writing if fs-extra's methods fail
+            // Format in official launcher style
             const profileData = JSON.stringify({
                 profiles: this.profiles,
-                settings: this.settings
+                settings: this.settings,
+                version: 3 // Current launcher format version
             }, null, 2);
             
             // Write file synchronously to ensure it completes
@@ -123,10 +171,10 @@ class ProfileManager {
             
             // Double check file exists
             const exists = await fs.pathExists(this.profilesPath);
-            logger.info(`Verified profile.json exists: ${exists}`);
+            logger.info(`Verified launcher_profiles.json exists: ${exists}`);
             
             if (!exists) {
-                throw new Error(`Failed to create profile.json - file doesn't exist after save`);
+                throw new Error(`Failed to create launcher_profiles.json - file doesn't exist after save`);
             }
             
             return true;
@@ -142,10 +190,11 @@ class ProfileManager {
             // Ensure directory exists before saving
             await fs.ensureDir(path.dirname(this.profilesPath));
             
-            // Write the file with pretty formatting
+            // Write the file with pretty formatting in official format
             await fs.writeJson(this.profilesPath, {
                 profiles: this.profiles,
-                settings: this.settings
+                settings: this.settings,
+                version: 3 // Current launcher format version
             }, { spaces: 2 });
             
             logger.info(`Profiles saved successfully to ${this.profilesPath}`);
@@ -327,6 +376,121 @@ class ProfileManager {
                 minecraftVersion
             }
         });
+    }
+    
+    // New methods for importing from Minecraft launcher profiles
+    
+    /**
+     * Import profiles from the official Minecraft launcher
+     * @param {string} customPath Optional custom path to launcher_profiles.json
+     * @returns {Promise<{success: boolean, imported: number, error?: string}>}
+     */
+    async importMinecraftProfiles(customPath = null) {
+        try {
+            // Default path for the official launcher profiles
+            const defaultPath = path.join(process.env.APPDATA, '.minecraft', 'launcher_profiles.json');
+            const profilesPath = customPath || defaultPath;
+            
+            logger.info(`Attempting to import profiles from ${profilesPath}`);
+            
+            if (!await fs.pathExists(profilesPath)) {
+                logger.warn(`Minecraft profiles not found at ${profilesPath}`);
+                return { success: false, imported: 0, error: 'Minecraft profiles not found' };
+            }
+            
+            // Read the profiles
+            const data = await fs.readJson(profilesPath);
+            
+            if (!data.profiles || typeof data.profiles !== 'object') {
+                logger.warn('Invalid profile format');
+                return { success: false, imported: 0, error: 'Invalid profile format' };
+            }
+            
+            // Initialize our profile manager if needed
+            if (!this.initialized) {
+                await this.initialize();
+            }
+            
+            // Track imported profiles
+            const importedProfiles = [];
+            
+            // Convert and import each profile
+            for (const [id, profile] of Object.entries(data.profiles)) {
+                try {
+                    // Skip profiles without valid version ID
+                    if (!profile.lastVersionId) continue;
+                    
+                    const convertedProfile = this.convertMinecraftProfile(profile);
+                    const result = await this.createProfile(convertedProfile);
+                    
+                    if (result.success) {
+                        importedProfiles.push(result.id);
+                        logger.info(`Imported profile: ${profile.name || 'unnamed'} (${profile.lastVersionId})`);
+                    }
+                } catch (error) {
+                    logger.warn(`Failed to import profile ${profile.name || id}: ${error.message}`);
+                }
+            }
+            
+            logger.info(`Successfully imported ${importedProfiles.length} profiles from Minecraft launcher`);
+            
+            return {
+                success: true,
+                imported: importedProfiles.length,
+                profiles: importedProfiles
+            };
+        } catch (error) {
+            logger.error(`Profile import error: ${error.message}`);
+            logger.error(error.stack);
+            return { success: false, imported: 0, error: error.message };
+        }
+    }
+    
+    /**
+     * Convert a Minecraft launcher profile to our format
+     * @param {Object} mcProfile Profile from Minecraft launcher
+     * @returns {Object} Our profile format
+     */
+    convertMinecraftProfile(mcProfile) {
+        // Map type
+        let type = 'vanilla';
+        if (mcProfile.lastVersionId.includes('forge')) {
+            type = 'forge';
+        } else if (mcProfile.lastVersionId.includes('fabric')) {
+            type = 'fabric';
+        } else if (mcProfile.lastVersionId.includes('quilt')) {
+            type = 'quilt';
+        }
+        
+        // Determine icon
+        let icon = 'Grass';
+        if (mcProfile.icon === 'Dirt') icon = 'Dirt';
+        if (mcProfile.icon === 'TNT') icon = 'TNT';
+        
+        // Extract resolution
+        let resolution = { width: 854, height: 480 };
+        if (mcProfile.resolution) {
+            resolution = {
+                width: parseInt(mcProfile.resolution.width) || 854,
+                height: parseInt(mcProfile.resolution.height) || 480
+            };
+        }
+        
+        // Convert Java args
+        const javaArgs = mcProfile.javaArgs || "-Xmx2G -XX:+UnlockExperimentalVMOptions -XX:+UseG1GC";
+        
+        // Create our profile format
+        return {
+            name: mcProfile.name || `${type} ${mcProfile.lastVersionId}`,
+            type: type,
+            icon: icon,
+            gameDir: mcProfile.gameDir || null,
+            lastVersionId: mcProfile.lastVersionId,
+            javaArgs: javaArgs,
+            resolution: resolution,
+            created: mcProfile.created || new Date().toISOString(),
+            lastUsed: mcProfile.lastUsed || new Date().toISOString()
+        };
     }
 }
 

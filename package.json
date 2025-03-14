@@ -1,6 +1,6 @@
 {
   "name": "alrightlauncher",
-  "version": "3.0.3",
+  "version": "3.0.4",
   "description": "Yet Another Minecraft Launcher",
   "author": "Batuhantrkgl",
   "main": "src/scripts/main.js",

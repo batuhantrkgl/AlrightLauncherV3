@@ -289,32 +289,56 @@ class MinecraftLauncher {
     });
   }
 
-  async verifyAndFixAssets(version) {
+  async verifyAndFixAssets(version, versionData) {
     try {
       logger.info(`Verifying assets for ${version}`);
       
-      // Check if the version exists
-      const versionDir = path.join(this.versionsDir, version);
-      const versionJsonPath = path.join(versionDir, `${version}.json`);
+      // Define versionDir explicitly
+      const versionDir = path.join(this.baseDir, "versions", version);
       
-      if (!await fs.pathExists(versionJsonPath)) {
-        logger.error(`Version JSON not found for ${version}`);
-        return false;
+      // If we have version data passed in, use it, otherwise load it
+      let versionJson = versionData;
+      if (!versionJson) {
+        const versionJsonPath = path.join(versionDir, `${version}.json`);
+        
+        if (!await fs.pathExists(versionJsonPath)) {
+          logger.error(`Version JSON not found for ${version}`);
+          return false;
+        }
+        
+        versionJson = await fs.readJson(versionJsonPath);
       }
       
-      // Load version data
-      const versionData = await fs.readJson(versionJsonPath);
+      // Check for asset index in this version or parent version
+      if (!versionJson.assetIndex && versionJson.inheritsFrom) {
+        // Try to get the asset index from the parent version
+        const parentVersion = versionJson.inheritsFrom;
+        logger.info(`Version ${version} has no asset index, checking parent ${parentVersion}`);
+        
+        const parentDir = path.join(this.baseDir, "versions", parentVersion);
+        const parentJsonPath = path.join(parentDir, `${parentVersion}.json`);
+        
+        if (await fs.pathExists(parentJsonPath)) {
+          const parentJson = await fs.readJson(parentJsonPath);
+          
+          // If parent has asset index, use it
+          if (parentJson.assetIndex) {
+            versionJson.assetIndex = parentJson.assetIndex;
+            logger.info(`Using asset index from parent: ${parentJson.assetIndex.id}`);
+          }
+        }
+      }
       
       // Initialize needsRepair flag
       let needsRepair = false;
       
       // Check for asset index
-      if (!versionData.assetIndex) {
+      if (!versionJson.assetIndex) {
         logger.error(`Asset index not defined for ${version}`);
         return false;
       }
       
-      const assetIndexId = versionData.assetIndex.id;
+      const assetIndexId = versionJson.assetIndex.id;
       const assetIndexPath = path.join(this.assetsDir, 'indexes', `${assetIndexId}.json`);
       
       // Check if asset index file exists
@@ -323,7 +347,7 @@ class MinecraftLauncher {
         needsRepair = true;
       } else {
         // Check for sound assets
-        const soundsVerified = await this.verifySoundResources(version, versionData);
+        const soundsVerified = await this.verifySoundResources(version, versionJson);
         if (!soundsVerified) {
           logger.warn(`Sound assets are incomplete for ${version}, needs repair`);
           needsRepair = true;
@@ -356,7 +380,7 @@ class MinecraftLauncher {
           await fixAssets(this.baseDir, version);
           
           // Recheck sound resources after repair
-          const soundsFixed = await this.verifySoundResources(version, versionData);
+          const soundsFixed = await this.verifySoundResources(version, versionJson);
           
           if (!soundsFixed) {
             logger.warn(`Sound resources could not be fully repaired for ${version}`);
@@ -404,8 +428,107 @@ class MinecraftLauncher {
 
   // Add the missing buildClasspath method
   async buildClasspath(versionJson, version) {
-    // We can use the existing getLibrariesClasspath method since it already has the correct logic
-    return this.getLibrariesClasspath(version);
+    try {
+      const versionDir = path.join(this.baseDir, "versions", version);
+      const libraries = [];
+      // Track libraries by their full name including version
+      const handledLibraries = new Map();
+      
+      // Track libraries by their base name (group:artifact) to avoid duplicates
+      const libraryVersions = new Map();
+      
+      const fabricOverrides = new Set([
+        "org.ow2.asm:asm",
+        "org.ow2.asm:asm-commons",
+        "org.ow2.asm:asm-tree",
+        "org.ow2.asm:asm-util",
+        "org.ow2.asm:asm-analysis"
+      ]);
+      
+      // First check if this is a Fabric/inherited version
+      const isFabric = version.includes('fabric') || (versionJson.mainClass && versionJson.mainClass.includes('fabric'));
+      
+      // Get parent JAR path if applicable
+      if (versionJson.inheritsFrom) {
+        const parentVersion = versionJson.inheritsFrom;
+        const parentVersionDir = path.join(this.baseDir, "versions", parentVersion);
+        const parentJar = path.join(parentVersionDir, `${parentVersion}.jar`);
+        
+        if (await fs.pathExists(parentJar)) {
+          logger.info(`Adding parent jar to classpath: ${parentJar}`);
+          libraries.push(parentJar);
+        } else {
+          // ...existing parent jar handling code...
+        }
+      }
+      
+      // Process libraries - first pass to collect all available versions
+      for (const lib of versionJson.libraries) {
+        if (!this.isLibraryCompatible(lib)) continue;
+        
+        // Extract library info
+        const parts = lib.name.split(':');
+        if (parts.length < 3) continue;
+        
+        const [group, artifact, version] = parts;
+        const libId = `${group}:${artifact}`;
+        const libVersion = version;
+        
+        // Record the version of this library
+        if (!libraryVersions.has(libId) || this.isNewerVersion(libVersion, libraryVersions.get(libId).version)) {
+          libraryVersions.set(libId, { 
+            version: libVersion, 
+            lib: lib,
+            isFabric: lib.name.includes('fabric') || fabricOverrides.has(libId)
+          });
+        }
+      }
+      
+      // Add the version JAR
+      const clientJar = path.join(versionDir, `${version}.jar`);
+      if (await fs.pathExists(clientJar)) {
+        logger.info(`Adding version jar to classpath: ${clientJar}`);
+        libraries.push(clientJar);
+      }
+      
+      // For Fabric, prioritize specific libraries
+      if (isFabric) {
+        // Second pass - add libraries in correct order, giving priority to Fabric components
+        // First add Fabric's core libraries
+        for (const [libId, libInfo] of libraryVersions.entries()) {
+          if (libInfo.isFabric) {
+            const libPath = this.getLibraryPath(libInfo.lib, this.librariesDir);
+            if (await fs.pathExists(libPath)) {
+              libraries.push(libPath);
+              handledLibraries.set(libId, libInfo.version);
+              logger.info(`Using Fabric's library: ${libInfo.lib.name}`);
+            } else {
+              logger.warn(`Missing Fabric library: ${libInfo.lib.name} at ${libPath}`);
+            }
+          }
+        }
+      }
+      
+      // Now add remaining libraries
+      for (const [libId, libInfo] of libraryVersions.entries()) {
+        if (!handledLibraries.has(libId)) {
+          const libPath = this.getLibraryPath(libInfo.lib, this.librariesDir);
+          if (await fs.pathExists(libPath)) {
+            libraries.push(libPath);
+            handledLibraries.set(libId, libInfo.version);
+          } else {
+            logger.warn(`Missing library: ${libInfo.lib.name} at ${libPath}`);
+          }
+        }
+      }
+      
+      // Log the final classpath for debugging
+      logger.info(`Classpath contains ${libraries.length} entries`);
+      return libraries.join(path.delimiter);
+    } catch (error) {
+      logger.error(`Error building classpath: ${error.message}`);
+      throw error;
+    }
   }
 
   // Add methods to build JVM and game arguments
@@ -516,6 +639,9 @@ class MinecraftLauncher {
       await fs.ensureDir(nativesDir);
       await fs.emptyDir(nativesDir);
 
+      // Track extracted natives for logging
+      let extractedCount = 0;
+
       for (const lib of versionJson.libraries) {
         if (!this.isLibraryCompatible(lib)) continue;
         if (!lib.natives) continue;
@@ -544,6 +670,24 @@ class MinecraftLauncher {
             parts[2],
             `${parts[1]}-${parts[2]}-${nativeSuffix}.jar`
           );
+        } else if (lib.name) {
+          // Legacy format without URL - construct path from name
+          const parts = lib.name.split(":");
+          if (parts.length >= 3) {
+            const groupId = parts[0];
+            const artifactId = parts[1];
+            const version = parts[2];
+            const nativeSuffix = nativeKey.replace("${arch}", "64");
+            
+            nativePath = path.join(
+                this.baseDir,
+                "libraries",
+                groupId.replace(/\./g, "/"),
+                artifactId,
+                version,
+                `${artifactId}-${version}-${nativeSuffix}.jar`
+            );
+          }
         }
 
         if (nativePath && (await fs.pathExists(nativePath))) {
@@ -555,7 +699,14 @@ class MinecraftLauncher {
                 // Skip META-INF and directories
                 const skip =
                   entry.fileName.startsWith("META-INF/") ||
-                  entry.fileName.endsWith("/");
+                  entry.fileName.endsWith("/") ||
+                  !entry.fileName.endsWith(".dll");
+                
+                if (!skip) {
+                  extractedCount++;
+                  logger.info(`Extracted: ${entry.fileName}`);
+                }
+                
                 return !skip;
               },
             });
@@ -564,6 +715,41 @@ class MinecraftLauncher {
           }
         } else {
           logger.warn(`Missing native: ${nativePath}`);
+        }
+      }
+
+      // If no natives extracted and version inherits from a parent, try parent's natives
+      if (extractedCount === 0 && versionJson.inheritsFrom) {
+        const parentVersion = versionJson.inheritsFrom;
+        logger.info(`No natives extracted, trying parent version ${parentVersion}`);
+        
+        // Get LWJGL libraries from the parent version
+        const parentLibs = await this.getLWJGLLibrariesFromParent(parentVersion);
+        
+        if (parentLibs.length > 0) {
+          logger.info(`Found ${parentLibs.length} parent LWJGL libraries to extract`);
+          
+          for (const libPath of parentLibs) {
+            try {
+              logger.info(`Extracting parent native: ${libPath}`);
+              await extract(libPath, {
+                dir: nativesDir,
+                onEntry: (entry) => {
+                  const valid = 
+                    entry.fileName.endsWith(".dll") && 
+                    !entry.fileName.startsWith("META-INF/");
+                  
+                  if (valid) {
+                    extractedCount++;
+                    logger.info(`Extracted parent native: ${entry.fileName}`);
+                  }
+                  return valid;
+                }
+              });
+            } catch (err) {
+              logger.error(`Failed to extract parent native ${libPath}: ${err.message}`);
+            }
+          }
         }
       }
 
@@ -580,6 +766,8 @@ class MinecraftLauncher {
         const filePath = path.join(nativesDir, file);
         await fs.chmod(filePath, 0o755);
       }
+      
+      return true;
     } catch (error) {
       logger.error(`Failed to set up natives: ${error.message}`);
       throw error;
@@ -1200,6 +1388,26 @@ class MinecraftLauncher {
       try {
         const versionData = await fs.readFile(versionJsonPath, "utf8");
         versionInfo = JSON.parse(versionData);
+        
+        // Check for inheritsFrom and merge with parent version data
+        if (versionInfo.inheritsFrom) {
+          logger.info(`Version ${version} inherits from ${versionInfo.inheritsFrom}`);
+          const parentVersion = versionInfo.inheritsFrom;
+          
+          // Ensure parent version is installed
+          await this.ensureParentVersionInstalled(parentVersion);
+          
+          const parentVersionDir = path.join(this.baseDir, "versions", parentVersion);
+          const parentVersionJsonPath = path.join(parentVersionDir, `${parentVersion}.json`);
+          
+          // Read and merge with parent version data
+          const parentVersionData = await fs.readFile(parentVersionJsonPath, "utf8");
+          const parentVersionInfo = JSON.parse(parentVersionData);
+          
+          // Merge parent version into child with child taking precedence
+          versionInfo = this.mergeVersionData(parentVersionInfo, versionInfo);
+          logger.info(`Successfully merged version data with parent ${parentVersion}`);
+        }
       } catch (error) {
         logger.error(`Error reading version JSON file: ${error.message}`);
         throw new Error(
@@ -1211,7 +1419,7 @@ class MinecraftLauncher {
       // Verify and fix assets before launching
       if (!options.skipAssetCheck) {
         logger.info(`Checking assets for ${version}`);
-        const assetsValid = await this.verifyAndFixAssets(version);
+        const assetsValid = await this.verifyAndFixAssets(version, versionInfo);
 
         if (!assetsValid && !options.ignoreAssetErrors) {
           logger.warn(
@@ -1234,27 +1442,36 @@ class MinecraftLauncher {
         `Detected LWJGL version: ${lwjglVersion} for Minecraft ${version}`
       );
 
-      // Special handling for Minecraft 1.20.5 and newer which uses LWJGL 3.3.3
-      if (
-        version === "1.20.5" ||
-        this.isVersionNewerOrEqual(version, "1.20.5")
-      ) {
-        logger.info(
-          `Using special natives extraction for Minecraft ${version}`
-        );
-        await this.extractModernNatives(
-          version,
-          versionInfo,
-          nativesDir,
-          lwjglVersion
-        );
-      } else if (this.isVersionNewerOrEqual(version, "1.19")) {
-        logger.info(`Using 1.19+ natives extraction for Minecraft ${version}`);
-        await this.extractModernNatives(version, versionInfo, nativesDir);
-      } else {
-        // Use legacy extraction for older versions
-        logger.info(`Using legacy natives extraction for Minecraft ${version}`);
-        await this.extractLegacyNatives(version, versionInfo, nativesDir);
+      // Extract natives based on Minecraft version
+      try {
+        if (version === "1.20.5" || this.isVersionNewerOrEqual(versionInfo.id || version, "1.20.5")) {
+          logger.info(`Using special natives extraction for Minecraft ${version}`);
+          await this.extractModernNatives(version, versionInfo, nativesDir, lwjglVersion);
+        } else if (this.isVersionNewerOrEqual(versionInfo.id || version, "1.19")) {
+          logger.info(`Using 1.19+ natives extraction for Minecraft ${version}`);
+          await this.extractModernNatives(version, versionInfo, nativesDir);
+        } else {
+          // Use legacy extraction for older versions
+          logger.info(`Using legacy natives extraction for Minecraft ${version}`);
+          await this.extractLegacyNatives(version, versionInfo, nativesDir);
+        }
+      } catch (error) {
+        // If native extraction fails with the mod version, try with the parent version
+        if (versionInfo.inheritsFrom) {
+          logger.warn(`Failed to extract natives for ${version}, trying with parent version ${versionInfo.inheritsFrom}`);
+          // Try extracting natives from parent version
+          const parentVersion = versionInfo.inheritsFrom;
+          if (parentVersion === "1.20.5" || this.isVersionNewerOrEqual(parentVersion, "1.20.5")) {
+            await this.extractModernNatives(parentVersion, versionInfo, nativesDir, lwjglVersion);
+          } else if (this.isVersionNewerOrEqual(parentVersion, "1.19")) {
+            await this.extractModernNatives(parentVersion, versionInfo, nativesDir);
+          } else {
+            await this.extractLegacyNatives(parentVersion, versionInfo, nativesDir);
+          }
+        } else {
+          // If there's no parent or parent extraction also fails, throw the error
+          throw error;
+        }
       }
 
       // Extract icon resources before launching
@@ -1391,6 +1608,38 @@ class MinecraftLauncher {
         error: error.message,
       };
     }
+  }
+
+  // Add new method to merge version data
+  mergeVersionData(parent, child) {
+    // Create a deep copy of the parent
+    const merged = JSON.parse(JSON.stringify(parent));
+    
+    // Override properties from child version, but keep parent properties if not present in child
+    Object.keys(child).forEach(key => {
+        // Special handling for libraries - we want to merge them
+        if (key === 'libraries' && merged.libraries) {
+            // Add libraries from child, maintaining parent libraries
+            merged.libraries = [...merged.libraries, ...child.libraries];
+        }
+        // Special handling for arguments - merge them
+        else if (key === 'arguments' && merged.arguments) {
+            if (child.arguments.game) {
+                merged.arguments.game = merged.arguments.game || [];
+                merged.arguments.game.push(...child.arguments.game);
+            }
+            if (child.arguments.jvm) {
+                merged.arguments.jvm = merged.arguments.jvm || [];
+                merged.arguments.jvm.push(...child.arguments.jvm);
+            }
+        }
+        // For everything else, child overrides parent
+        else {
+            merged[key] = child[key];
+        }
+    });
+    
+    return merged;
   }
 
   // Add new method to extract icon resources
@@ -1918,6 +2167,120 @@ class MinecraftLauncher {
       logger.warn(`Error verifying sound resources: ${error.message}`);
       return false;
     }
+  }
+
+  // New method to ensure parent version is installed
+  async ensureParentVersionInstalled(parentVersion) {
+    try {
+      const parentVersionDir = path.join(this.baseDir, "versions", parentVersion);
+      const parentJarPath = path.join(parentVersionDir, `${parentVersion}.jar`);
+      const parentJsonPath = path.join(parentVersionDir, `${parentVersion}.json`);
+      
+      if (!(await fs.pathExists(parentJarPath)) || !(await fs.pathExists(parentJsonPath))) {
+        logger.info(`Parent version ${parentVersion} not fully installed, installing now...`);
+        const installer = new MinecraftInstaller(this.baseDir);
+        await installer.installVersion(parentVersion);
+        
+        // Verify installation succeeded
+        if (!(await fs.pathExists(parentJarPath))) {
+          throw new Error(`Failed to install parent version ${parentVersion}`);
+        }
+        logger.info(`Successfully installed parent version: ${parentVersion}`);
+      }
+      return true;
+    } catch (error) {
+      logger.error(`Error ensuring parent version: ${error.message}`);
+      throw error;
+    }
+  }
+
+  // Add this helper method to parse and compare version strings
+  parseVersion(versionString) {
+    if (!versionString) return [0];
+    return versionString.split('.').map(part => {
+      // Handle versions with non-numeric parts like "0.15.4+mixin.0.8.7"
+      const numPart = parseInt(part.split('+')[0], 10);
+      return isNaN(numPart) ? 0 : numPart;
+    });
+  }
+
+  isNewerVersion(v1, v2) {
+    const parts1 = this.parseVersion(v1);
+    const parts2 = this.parseVersion(v2);
+    
+    for (let i = 0; i < Math.max(parts1.length, parts2.length); i++) {
+      const p1 = parts1[i] || 0;
+      const p2 = parts2[i] || 0;
+      if (p1 > p2) return true;
+      if (p1 < p2) return false;
+    }
+    return false; // Equal versions
+  }
+
+  // Add this missing method that was referenced in extractLegacyNatives
+  async getLWJGLLibrariesFromParent(parentVersion) {
+    logger.info(`Finding LWJGL native JARs in parent version ${parentVersion}`);
+    const nativeJars = [];
+    
+    try {
+      const parentVersionDir = path.join(this.baseDir, "versions", parentVersion);
+      const parentJsonPath = path.join(parentVersionDir, `${parentVersion}.json`);
+      
+      if (!await fs.pathExists(parentJsonPath)) {
+        logger.warn(`Parent version JSON not found: ${parentJsonPath}`);
+        return nativeJars;
+      }
+      
+      const parentData = await fs.readJson(parentJsonPath);
+      
+      // Find native libraries in parent version
+      for (const lib of parentData.libraries || []) {
+        if (!this.isLibraryCompatible(lib)) continue;
+        
+        // Check for natives
+        if (!lib.natives) continue;
+        
+        // Get Windows native key
+        const nativeKey = lib.natives.windows || lib.natives["windows-64"];
+        if (!nativeKey) continue;
+        
+        // Try to get the path to the native JAR
+        let nativePath;
+        if (lib.downloads?.classifiers?.[nativeKey]) {
+          nativePath = path.join(this.baseDir, "libraries", lib.downloads.classifiers[nativeKey].path);
+        } else if (lib.name) {
+          const parts = lib.name.split(":");
+          const nativeSuffix = nativeKey.replace("${arch}", "64");
+          
+          if (parts.length >= 3) {
+            const groupId = parts[0];
+            const artifactId = parts[1];
+            const version = parts[2];
+            
+            nativePath = path.join(
+              this.baseDir,
+              "libraries",
+              groupId.replace(/\./g, "/"),
+              artifactId,
+              version,
+              `${artifactId}-${version}-${nativeSuffix}.jar`
+            );
+          }
+        }
+        
+        // Add the native JAR to our list if it exists
+        if (nativePath && await fs.pathExists(nativePath)) {
+          nativeJars.push(nativePath);
+          logger.info(`Found parent native JAR: ${nativePath}`);
+        }
+      }
+      
+      logger.info(`Found ${nativeJars.length} LWJGL native JARs in parent version ${parentVersion}`);
+    } catch (error) {
+      logger.error(`Error getting parent LWJGL libraries: ${error.message}`);
+    }
+    
+    return nativeJars;
   }
 }
 

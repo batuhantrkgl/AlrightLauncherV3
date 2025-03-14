@@ -13,38 +13,52 @@ if (!window.minecraft?.logger) {
     };
 }
 
+// Add CSS for version badges (add this near the top of the file)
+const styleElement = document.createElement('style');
+styleElement.textContent = `
+    .version-badge {
+        display: inline-block;
+        font-size: 0.7em;
+        padding: 0.1em 0.4em;
+        margin-right: 0.5em;
+        border-radius: 3px;
+        color: white;
+    }
+    .version-badge.fabric {
+        background-color: #5547b9;
+    }
+    .version-badge.forge {
+        background-color: #e76504;
+    }
+    .version-badge.quilt {
+        background-color: #49a58b;
+    }
+    .fabric-version {
+        border-left: 3px solid #5547b9;
+    }
+    .forge-version {
+        border-left: 3px solid #e76504;
+    }
+    .quilt-version {
+        border-left: 3px solid #49a58b;
+    }
+`;
+document.head.appendChild(styleElement);
+
 // Add version comparison function
 function compareVersions(a, b) {
-    // Split version strings into components (e.g., "1.19.2" => [1, 19, 2])
-    const aParts = a.split('.').map(part => parseInt(part, 10) || 0);
-    const bParts = b.split('.').map(part => parseInt(part, 10) || 0);
+    const aParts = a.split('.').map(Number);
+    const bParts = b.split('.').map(Number);
     
-    // Compare each component
     for (let i = 0; i < Math.max(aParts.length, bParts.length); i++) {
-        const aVal = aParts[i] || 0;
-        const bVal = bParts[i] || 0;
-        if (aVal !== bVal) {
-            return bVal - aVal; // Descending order (newer versions first)
-        }
+        const aPart = aParts[i] || 0;
+        const bPart = bParts[i] || 0;
+        
+        if (aPart > bPart) return -1;
+        if (aPart < bPart) return 1;
     }
+    
     return 0;
-}
-
-let isOperationInProgress = false;
-
-function showProgress(show = true) {
-    const overlay = document.getElementById('progressOverlay');
-    overlay.style.display = show ? 'flex' : 'none';
-    
-    if (!show) {
-        // Clear logs when hiding
-        recentLogs = [];
-        document.getElementById('progressLogs').innerHTML = '';
-    }
-    
-    // Disable/enable UI elements
-    document.body.classList.toggle('disabled', show);
-    isOperationInProgress = show;
 }
 
 function updateProgress(percent, text, detail = '') {
@@ -61,6 +75,7 @@ function updateProgress(percent, text, detail = '') {
 }
 
 let recentLogs = [];
+let isOperationInProgress = false;  // Add this missing variable definition
 
 function updateProgressLogs(message) {
     const logsContainer = document.getElementById('progressLogs');
@@ -81,6 +96,21 @@ function updateProgressLogs(message) {
             </div>
         `)
         .join('');
+}
+
+function showProgress(show = true) {
+    const overlay = document.getElementById('progressOverlay');
+    overlay.style.display = show ? 'flex' : 'none';
+    
+    if (!show) {
+        // Clear logs when hiding
+        recentLogs = [];
+        document.getElementById('progressLogs').innerHTML = '';
+    }
+    
+    // Disable/enable UI elements
+    document.body.classList.toggle('disabled', show);
+    isOperationInProgress = show;  // Set the flag based on the overlay state
 }
 
 const versionElement = document.getElementById('version');
@@ -118,20 +148,54 @@ username.addEventListener('focus', function() {
 
 async function fetchVersions() {
     try {
+        let versions = [];
+        
         if (offlineMode) {
             window.minecraft.logger.info('Fetching installed versions (offline mode)');
-            const versions = await window.minecraft.offline.getInstalledVersions();
-            // Sort versions by id (newest first)
-            versions.sort((a, b) => compareVersions(a.id, b.id));
-            return versions;
+            // Get all installed versions, including Fabric, Forge, etc.
+            const installedVersions = await window.minecraft.offline.getInstalledVersions();
+            versions = installedVersions;
         } else {
             window.minecraft.logger.info('Fetching online versions');
-            const versions = await window.minecraft.getVersions();
-            const releaseVersions = versions.filter(v => v.type === 'release');
-            // Sort versions by id (newest first)
-            releaseVersions.sort((a, b) => compareVersions(a.id, b.id));
-            return releaseVersions;
+            // Get vanilla versions from Mojang API
+            const vanillaVersions = await window.minecraft.getVersions();
+            const releaseVersions = vanillaVersions.filter(v => v.type === 'release');
+            versions = releaseVersions;
+            
+            // Add installed modded versions that aren't in the vanilla list
+            try {
+                const installedVersions = await window.minecraft.offline.getInstalledVersions();
+                const moddedVersions = installedVersions.filter(v => {
+                    // Find versions that have modloaders
+                    return v.id.includes('fabric') || v.id.includes('forge') || v.id.includes('quilt');
+                });
+                
+                // Add modded versions to the list with proper type labels
+                for (const modVersion of moddedVersions) {
+                    if (!versions.some(v => v.id === modVersion.id)) {
+                        // Add modded version to the list with type detection
+                        let type = 'release';
+                        if (modVersion.id.includes('fabric')) type = 'fabric';
+                        if (modVersion.id.includes('forge')) type = 'forge';
+                        if (modVersion.id.includes('quilt')) type = 'quilt';
+                        
+                        versions.push({
+                            ...modVersion,
+                            type: type
+                        });
+                    }
+                }
+                
+                window.minecraft.logger.info(`Added ${moddedVersions.length} modded versions to the list`);
+            } catch (error) {
+                window.minecraft.logger.warn(`Failed to get installed modded versions: ${error.message}`);
+            }
         }
+        
+        // Sort versions by id (newest first)
+        versions.sort((a, b) => compareVersions(a.id, b.id));
+        
+        return versions;
     } catch (error) {
         window.minecraft.logger.error('Error fetching versions:', error);
         
@@ -169,14 +233,40 @@ async function fetchVersions() {
     }
 }
 
+// Update the version element click handler to display modded versions properly
 versionElement.addEventListener('click', async () => {
     window.minecraft.logger.info('Fetching Minecraft versions...');
     const versions = await fetchVersions();
     window.minecraft.logger.info(`Found ${versions.length} versions`);
     
-    dropdown.innerHTML = versions
-        .map(v => `<div class="version-item">${v.id}</div>`)
-        .join('');
+    // Clear existing dropdown content
+    dropdown.innerHTML = '';
+    
+    // Add versions to dropdown with modloader indicators
+    versions.forEach(v => {
+        // Determine if this is a modded version
+        const isFabric = v.id.includes('fabric') || v.type === 'fabric';
+        const isForge = v.id.includes('forge') || v.type === 'forge';
+        const isQuilt = v.id.includes('quilt') || v.type === 'quilt';
+        
+        // Add CSS class based on modloader type
+        const typeClass = isFabric ? 'fabric-version' : 
+                         isForge ? 'forge-version' : 
+                         isQuilt ? 'quilt-version' : '';
+        
+        // Add badge based on modloader type
+        const typeBadge = isFabric ? '<span class="version-badge fabric">Fabric</span>' : 
+                         isForge ? '<span class="version-badge forge">Forge</span>' : 
+                         isQuilt ? '<span class="version-badge quilt">Quilt</span>' : '';
+        
+        // Store the version ID in data-version attribute without any modifications
+        dropdown.insertAdjacentHTML('beforeend', 
+            `<div class="version-item ${typeClass}" data-version="${v.id}" data-type="${v.type || 'vanilla'}">
+                ${typeBadge}
+                <span class="version-text">${v.id}</span>
+             </div>`
+        );
+    });
     
     dropdown.style.display = 'block';
 });
@@ -187,15 +277,25 @@ document.addEventListener('click', (e) => {
     }
 });
 
-// Modify version selection to save the selected version
+// Modify version selection to use data-version attribute and store only the version ID
 dropdown.addEventListener('click', (e) => {
-    if (e.target.classList.contains('version-item')) {
-        const selectedVersion = e.target.textContent;
-        versionElement.textContent = selectedVersion;
+    // Handle clicks on both the version item div and any children (like badge spans)
+    const versionItem = e.target.closest('.version-item');
+    
+    if (versionItem) {
+        // Use the data-version attribute to get the actual version ID without badges
+        const selectedVersion = versionItem.getAttribute('data-version');
+        
+        // Store the clean version ID but display with appropriate formatting
+        versionElement.textContent = selectedVersion; // Show only the version ID, no badge text
+        versionElement.setAttribute('data-version', selectedVersion);
+        
         dropdown.style.display = 'none';
         
         // Save selected version to localStorage
         localStorage.setItem('lastVersion', selectedVersion);
+        
+        window.minecraft.logger.info(`Selected version: ${selectedVersion}`);
     }
 });
 
@@ -236,168 +336,6 @@ function addLogEntry(entry) {
 
 window.minecraft.logger.addLogListener(addLogEntry);
 
-// Settings panel functionality
-const settingsModal = document.getElementById('settingsModal');
-const ramSlider = document.getElementById('ram-slider');
-const ramValue = document.getElementById('ram-value');
-const themeToggle = document.getElementById('theme-toggle');
-const fullscreenToggle = document.getElementById('fullscreen-toggle');
-
-// Add settings for offline mode
-const offlineToggle = document.getElementById('offline-toggle');
-const skipVerificationToggle = document.getElementById('skip-verification-toggle');
-let offlineMode = false;
-let skipVerification = false;
-
-// Offline mode toggle handler
-offlineToggle.addEventListener('change', (e) => {
-    offlineMode = e.target.checked;
-    localStorage.setItem('offlineMode', offlineMode);
-    
-    // Enable/disable skip verification based on offline mode
-    skipVerificationToggle.disabled = !offlineMode;
-    if (!offlineMode) {
-        skipVerificationToggle.checked = false;
-        skipVerification = false;
-        localStorage.setItem('skipVerification', false);
-    }
-    
-    window.minecraft.logger.info(`Offline mode ${offlineMode ? 'enabled' : 'disabled'}`);
-    
-    // If enabling offline mode, check installed versions
-    if (offlineMode) {
-        updateInstalledVersions();
-    }
-});
-
-// Skip verification toggle handler
-skipVerificationToggle.addEventListener('change', (e) => {
-    skipVerification = e.target.checked;
-    localStorage.setItem('skipVerification', skipVerification);
-    window.minecraft.logger.info(`Skip verification ${skipVerification ? 'enabled' : 'disabled'}`);
-});
-
-// Function to update installed versions when in offline mode
-async function updateInstalledVersions() {
-    try {
-        window.minecraft.logger.info('Fetching installed versions for offline mode...');
-        const installedVersions = await window.minecraft.offline.getInstalledVersions();
-        
-        if (installedVersions.length === 0) {
-            window.minecraft.logger.warn('No installed versions found. Offline mode might not work properly.');
-            offlineToggle.checked = false;
-            offlineMode = false;
-            localStorage.setItem('offlineMode', false);
-            return;
-        }
-        
-        window.minecraft.logger.info(`Found ${installedVersions.length} installed versions`);
-        
-        // If we're in offline mode, update the version dropdown to only show installed versions
-        if (offlineMode) {
-            dropdown.innerHTML = installedVersions
-                .map(v => `<div class="version-item">${v.id}</div>`)
-                .join('');
-                
-            // If current selected version is not installed, select the first installed version
-            const currentVersion = versionElement.textContent;
-            const isCurrentInstalled = installedVersions.some(v => v.id === currentVersion);
-            
-            if (!isCurrentInstalled && installedVersions.length > 0) {
-                versionElement.textContent = installedVersions[0].id;
-            }
-        }
-    } catch (error) {
-        window.minecraft.logger.error('Failed to fetch installed versions:', error);
-    }
-}
-
-// Update settings toggle handler
-debugToggle?.addEventListener('click', () => {
-    if (settingsModal) {
-        const isOpen = settingsModal.style.display === 'flex';
-        settingsModal.style.display = isOpen ? 'none' : 'flex';
-        window.minecraft.logger.info(`Settings panel ${isOpen ? 'closed' : 'opened'}`);
-    }
-});
-
-// Handle settings close button
-document.querySelector('.settings-close')?.addEventListener('click', () => {
-    if (settingsModal) {
-        settingsModal.style.display = 'none';
-    }
-});
-
-// Add tab functionality
-document.querySelectorAll('.settings-tab').forEach(tab => {
-    tab.addEventListener('click', () => {
-        const tabId = tab.getAttribute('data-tab');
-        
-        // Update active tab
-        document.querySelectorAll('.settings-tab').forEach(t => {
-            t.classList.remove('active');
-        });
-        tab.classList.add('active');
-        
-        // Update active content
-        document.querySelectorAll('.tab-content').forEach(content => {
-            content.classList.remove('active');
-        });
-        document.getElementById(tabId).classList.add('active');
-        
-        window.minecraft.logger.info(`Settings tab switched to: ${tabId}`);
-    });
-});
-
-// Close settings when clicking outside the modal
-document.addEventListener('click', (e) => {
-    if (settingsModal && settingsModal.style.display === 'flex') {
-        // Check if the click target is outside the settings content and not the settings toggle button
-        if (!e.target.closest('.settings-content') && !e.target.closest('.debug-toggle')) {
-            settingsModal.style.display = 'none';
-            window.minecraft.logger.info('Settings closed by clicking outside');
-        }
-    }
-});
-
-// RAM slider
-if (ramSlider && ramValue) {
-    ramSlider.addEventListener('input', (e) => {
-        const value = e.target.value;
-        ramValue.textContent = value;
-        localStorage.setItem('maxRam', value);
-        window.minecraft.logger.info(`RAM value changed to ${value}MB`);
-    });
-}
-
-// Theme toggle
-themeToggle.addEventListener('change', (e) => {
-    const isDark = e.target.checked;
-    document.documentElement.setAttribute('data-theme', isDark ? 'dark' : 'light');
-    localStorage.setItem('theme', isDark ? 'dark' : 'light');
-    window.minecraft.logger.info(`Theme changed to ${isDark ? 'dark' : 'light'} mode`);
-});
-
-// Fullscreen toggle with error handling
-fullscreenToggle.addEventListener('change', async (e) => {
-    try {
-        const isFullscreen = e.target.checked;
-        window.minecraft.logger.info(`Fullscreen toggle requested: ${isFullscreen}`);
-        await window.minecraft.window.toggleFullscreen();
-        localStorage.setItem('fullscreen', isFullscreen);
-        window.minecraft.logger.info('Fullscreen toggle successful');
-    } catch (error) {
-        window.minecraft.logger.error(`Fullscreen toggle failed: ${error.message}`);
-        e.target.checked = !e.target.checked; // Revert the toggle if there's an error
-    }
-});
-
-// Listen for fullscreen changes from the main process
-window.minecraft.window.onFullscreenChange((isFullscreen) => {
-    fullscreenToggle.checked = isFullscreen;
-});
-
-// Load saved settings
 window.addEventListener('DOMContentLoaded', async () => {
     window.minecraft.logger.info('=== Loading saved settings ===');
     
@@ -411,54 +349,40 @@ window.addEventListener('DOMContentLoaded', async () => {
     // Load last played version and update the UI
     const savedVersion = localStorage.getItem('lastVersion');
     if (savedVersion) {
-        document.getElementById('version').textContent = savedVersion;
-        window.minecraft.logger.info(`Loaded last played version: ${savedVersion}`);
+        // Remove duplicated "Fabric" prefix if present
+        let cleanVersion = savedVersion;
+        if (cleanVersion.startsWith('Fabricfabric-')) {
+            cleanVersion = cleanVersion.replace('Fabricfabric-', 'fabric-');
+            // Update localStorage with fixed version
+            localStorage.setItem('lastVersion', cleanVersion);
+        }
+        
+        document.getElementById('version').textContent = cleanVersion;
+        document.getElementById('version').setAttribute('data-version', cleanVersion);
+        window.minecraft.logger.info(`Loaded last played version: ${cleanVersion}`);
     }
     
+    // Load RAM setting
     const savedRam = localStorage.getItem('maxRam');
     window.minecraft.logger.info(`Saved RAM: ${savedRam || 'default'}`);
     
+    // Load theme setting
     const savedTheme = localStorage.getItem('theme');
     window.minecraft.logger.info(`Saved theme: ${savedTheme || 'default'}`);
     
+    // Load fullscreen setting
     const savedFullscreen = localStorage.getItem('fullscreen');
     window.minecraft.logger.info(`Saved fullscreen: ${savedFullscreen || 'default'}`);
-    
-    // Load RAM setting
-    if (savedRam) {
-        ramSlider.value = savedRam;
-        ramValue.textContent = savedRam;
-    }
-
-    // Load theme setting
-    if (savedTheme === 'dark') {
-        themeToggle.checked = true;
-        document.documentElement.setAttribute('data-theme', 'dark');
-    }
-
-    // Load fullscreen setting
-    if (savedFullscreen === 'true') {
-        fullscreenToggle.checked = true;
-        await window.minecraft.window.toggleFullscreen();
-    }
-
-    // Check current fullscreen state
-    const isFullscreen = await window.minecraft.window.isFullscreen();
-    fullscreenToggle.checked = isFullscreen;
-    
-    window.minecraft.logger.info('=== Settings loaded successfully ===');
     
     // Load offline mode settings
     const savedOfflineMode = localStorage.getItem('offlineMode') === 'true';
     const savedSkipVerification = localStorage.getItem('skipVerification') === 'true';
-    
     window.minecraft.logger.info(`Saved offline mode: ${savedOfflineMode}`);
     window.minecraft.logger.info(`Saved skip verification: ${savedSkipVerification}`);
     
     // Apply settings
     offlineMode = savedOfflineMode;
     skipVerification = savedSkipVerification;
-    
     offlineToggle.checked = offlineMode;
     skipVerificationToggle.checked = skipVerification;
     skipVerificationToggle.disabled = !offlineMode;
@@ -472,7 +396,7 @@ window.addEventListener('DOMContentLoaded', async () => {
     const playButton = document.querySelector('.play-button');
     playButton.disabled = true;
     playButton.textContent = 'Checking Java...';
-
+    
     try {
         const hasJava = await window.minecraft.isJavaInstalled();
         if (!hasJava) {
@@ -486,178 +410,13 @@ window.addEventListener('DOMContentLoaded', async () => {
         window.minecraft.logger.error(`Startup Java check failed: ${error.message}`);
         playButton.textContent = 'Java Error';
     }
+    
+    // Check for missing profiles after loading versions
+    await checkAndCreateMissingProfiles();
 });
 
 // Check Java on startup
-function disableUI() {
-    document.body.classList.add('overlay-disabled');
-    const buttons = document.querySelectorAll('button');
-    buttons.forEach(btn => btn.disabled = true);
-}
-
-function enableUI() {
-    document.body.classList.remove('overlay-disabled');
-    const buttons = document.querySelectorAll('button');
-    buttons.forEach(btn => btn.disabled = false);
-}
-
-async function getJavaDownloadUrl() {
-    try {
-        const apiUrl = 'https://api.adoptium.net/v3/assets/feature_releases/21/ga';
-        const params = new URLSearchParams({
-            'architecture': 'x64',
-            'heap_size': 'normal',
-            'image_type': 'jdk',  // Changed from 'jre' to 'jdk' since MSI is in JDK distribution
-            'jvm_impl': 'hotspot',
-            'os': 'windows',
-            'page': '0',
-            'page_size': '1',
-            'project': 'jdk',
-            'sort_order': 'DESC',
-            'vendor': 'eclipse'
-        });
-
-        window.minecraft.logger.info('Fetching Java download URL from Adoptium API...');
-        
-        // Add timeout and proper headers
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 second timeout
-        
-        const response = await fetch(`${apiUrl}?${params}`, {
-            headers: {
-                'Accept': 'application/json',
-                'User-Agent': 'AlrightLauncher'
-            },
-            signal: controller.signal
-        });
-        
-        clearTimeout(timeoutId);
-
-        if (!response.ok) {
-            throw new Error(`API request failed with status ${response.status}`);
-        }
-
-        const data = await response.json();
-        window.minecraft.logger.info('API response received:', JSON.stringify(data));
-        
-        if (!Array.isArray(data) || data.length === 0) {
-            throw new Error('No Java downloads found');
-        }
-
-        const binary = data[0].binary;
-        if (!binary || !binary.installer || !binary.installer.link) {
-            // Fallback to direct URL if API response is invalid
-            return 'https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.5%2B11/OpenJDK21U-jdk_x64_windows_hotspot_21.0.5_11.msi';
-        }
-
-        const downloadUrl = binary.installer.link;
-        window.minecraft.logger.info('Successfully retrieved Java MSI installer URL: ' + downloadUrl);
-        return downloadUrl;
-    } catch (error) {
-        window.minecraft.logger.error(`Failed to get Java download URL: ${error.message}`);
-        // Fallback URL if API fails
-        return 'https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.5%2B11/OpenJDK21U-jdk_x64_windows_hotspot_21.0.5_11.msi';
-    }
-}
-
-async function downloadJava() {
-    try {
-        const downloadUrl = await getJavaDownloadUrl();
-        window.minecraft.logger.info('Starting Java download from: ' + downloadUrl);
-        
-        // Create progress indicator in the UI
-        const progressElement = document.createElement('div');
-        progressElement.className = 'java-download-progress';
-        progressElement.innerHTML = '<span>Downloading Java...</span><progress value="0" max="100"></progress>';
-        document.body.appendChild(progressElement);
-        
-        // Use IPC to trigger the download in the main process with progress updates
-        const success = await window.minecraft.ipc.invoke('download-java', downloadUrl, (progress) => {
-            const progressBar = progressElement.querySelector('progress');
-            if (progressBar) {
-                progressBar.value = progress;
-                progressElement.querySelector('span').textContent = `Downloading Java... ${progress}%`;
-            }
-        });
-        
-        // Remove progress indicator
-        if (progressElement.parentNode) {
-            progressElement.parentNode.removeChild(progressElement);
-        }
-        
-        if (!success) {
-            throw new Error('Download process failed');
-        }
-        
-        window.minecraft.logger.info('Java download completed successfully');
-        return true;
-    } catch (error) {
-        window.minecraft.logger.error('Java download failed: ' + error.message);
-        return false;
-    }
-}
-
-async function showJavaInstallPrompt() {
-    return new Promise((resolve) => {
-        const modal = document.getElementById('javaModal');
-        const installBtn = document.getElementById('installJavaBtn');
-        const cancelBtn = document.getElementById('cancelJavaBtn');
-        modal.classList.add('active');
-
-        installBtn.onclick = async () => {
-            installBtn.disabled = true;
-            cancelBtn.disabled = true;
-            installBtn.textContent = 'Installing...';
-            
-            disableUI();
-            const downloaded = await downloadJava();
-            if (downloaded) {
-                const success = await window.minecraft.checkJava();
-                if (success) {
-                    window.minecraft.logger.info('Java installation completed successfully');
-                    modal.classList.remove('active');
-                    enableUI();
-                    resolve(true);
-                    return;
-                }
-            }
-            window.minecraft.logger.error('Java installation failed');
-            installBtn.textContent = 'Installation Failed';
-            setTimeout(() => {
-                installBtn.disabled = false;
-                cancelBtn.disabled = false;
-                installBtn.textContent = 'Try Again';
-            }, 2000);
-            enableUI();
-            resolve(false);
-        };
-
-        cancelBtn.onclick = () => {
-            modal.classList.remove('active');
-            resolve(false);
-        };
-    });
-}
-
-window.addEventListener('DOMContentLoaded', async () => {
-    const playButton = document.querySelector('.play-button');
-    playButton.disabled = true;
-    playButton.textContent = 'Checking Java...';
-
-    try {
-        const hasJava = await window.minecraft.isJavaInstalled();
-        if (!hasJava) {
-            playButton.textContent = 'Java Required';
-            playButton.disabled = true;
-            return;
-        }
-        playButton.disabled = false;
-        playButton.textContent = 'Play';
-    } catch (error) {
-        window.minecraft.logger.error(`Startup Java check failed: ${error.message}`);
-        playButton.textContent = 'Java Error';
-    }
-});
+window.minecraft.checkJava();
 
 // Add these global variables at the top of the file
 let gameRunning = false;
@@ -668,17 +427,28 @@ async function playGame() {
     if (isOperationInProgress || gameRunning || launchInProgress) return;
     
     launchInProgress = true;
-    const version = document.getElementById('version').textContent;
+    
+    // Get the version from data-version attribute first, then fallback to text content
+    let version = versionElement.getAttribute('data-version') || versionElement.textContent;
+    
+    // Extra safety check: Remove duplicated "Fabric" prefix if present
+    if (version.startsWith('Fabricfabric-')) {
+        version = version.replace('Fabricfabric-', 'fabric-');
+        window.minecraft.logger.info(`Fixed duplicated prefix in version: ${version}`);
+    }
+    
     const username = document.getElementById('username').textContent;
     
     // Save both values when launching the game
     localStorage.setItem('lastUsername', username);
     localStorage.setItem('lastVersion', version);
     
+    // Log the exact version being launched
+    window.minecraft.logger.info(`Launching version: ${version}`);
+    
     try {
         // Disable all UI elements
         disableAllControls(true);
-        
         showProgress(true);
         updateProgress(0, 'Preparing to launch...');
         
@@ -699,7 +469,6 @@ async function playGame() {
                         );
                     }
                 }
-                
                 window.minecraft.logger.info('File verification passed');
             } catch (verifyError) {
                 throw new Error(`File verification error: ${verifyError.message}`);
@@ -723,7 +492,6 @@ async function playGame() {
             // Hide progress overlay
             setTimeout(() => {
                 showProgress(false);
-                
                 // Hide the launcher after a short delay
                 setTimeout(() => {
                     window.minecraft.ipc.invoke('hide-window');
@@ -733,7 +501,6 @@ async function playGame() {
         } else {
             throw new Error(launched.error || 'Failed to launch game');
         }
-        
     } catch (error) {
         updateProgress(100, 'Error', error.message);
         setTimeout(() => {
@@ -803,8 +570,7 @@ window.verifyFiles = async (version) => {
     try {
         showProgress(true);
         updateProgress(0, 'Starting file verification...');
-        
-        const versionToVerify = version || document.getElementById('version').textContent;
+        const versionToVerify = version || versionElement.getAttribute('data-version') || versionElement.textContent;
         
         // Get file status first
         updateProgress(20, 'Checking file status...');
@@ -869,10 +635,10 @@ document.getElementById('createStandalone').addEventListener('click', async () =
                 ${v.id}
             </label>
         `).join('');
-
+        
         // Show modal
         modal.classList.add('active');
-
+        
         // Search functionality
         searchInput.addEventListener('input', (e) => {
             const search = e.target.value.toLowerCase();
@@ -902,7 +668,7 @@ document.getElementById('createStandalone').addEventListener('click', async () =
         document.getElementById('confirmVersionSelect').onclick = async () => {
             const selectedVersions = Array.from(versionList.querySelectorAll('input[type="checkbox"]:checked'))
                 .map(cb => cb.value);
-
+            
             if (selectedVersions.length === 0) {
                 window.minecraft.logger.warn('No versions selected');
                 return;
@@ -912,7 +678,6 @@ document.getElementById('createStandalone').addEventListener('click', async () =
             
             const button = document.getElementById('createStandalone');
             const originalText = button.textContent;
-            
             try {
                 button.disabled = true;
                 button.textContent = 'Creating...';
@@ -935,7 +700,6 @@ document.getElementById('createStandalone').addEventListener('click', async () =
                 }, 2000);
             }
         };
-
     } catch (error) {
         window.minecraft.logger.error('Failed to load version selection:', error);
     }
@@ -972,8 +736,6 @@ window.minecraft.onGameCrash((data) => {
     const playButton = document.querySelector('.play-button');
     playButton.textContent = 'Play';
     playButton.disabled = false;
-    
-    window.minecraft.logger.error(`Game crashed: ${data.version}`);
 });
 
 window.minecraft.onGameClose((data) => {
@@ -1039,7 +801,7 @@ async function populateServerVersions() {
     }
 }
 
-// Add form submission handler
+// Add form submission handlers
 document.getElementById('serverForm')?.addEventListener('submit', async (e) => {
     e.preventDefault();
     const form = e.target;
@@ -1053,9 +815,18 @@ document.getElementById('serverForm')?.addEventListener('submit', async (e) => {
         const serverData = {
             name: form.serverName.value,
             version: form.serverVersion.value,
-            port: parseInt(form.serverPort.value) || 25565
+            port: parseInt(form.serverPort.value) || 25565,
+            memory: parseInt(form.serverMemory.value) || 2048,
+            maxPlayers: parseInt(form.maxPlayers.value) || 20,
+            viewDistance: parseInt(form.viewDistance.value) || 10,
+            difficulty: form.difficulty.value,
+            gamemode: form.gamemode.value,
+            pvp: form.pvp.checked,
+            spawnAnimals: form.spawnAnimals.checked,
+            spawnMonsters: form.spawnMonsters.checked
         };
 
+        localStorage.setItem(`server-${serverData.name}`, JSON.stringify(serverData));
         window.minecraft.logger.info(`Creating server: ${JSON.stringify(serverData)}`);
         const result = await window.minecraft.server.create(serverData);
 
@@ -1163,20 +934,16 @@ document.getElementById('serverForm')?.addEventListener('submit', async (e) => {
             version: form.serverVersion.value,
             port: parseInt(form.serverPort.value) || 25565,
             memory: parseInt(form.serverMemory.value) || 2048,
-            settings: {
-                maxPlayers: parseInt(form.maxPlayers.value) || 20,
-                viewDistance: parseInt(form.viewDistance.value) || 10,
-                difficulty: form.difficulty.value,
-                gamemode: form.gamemode.value,
-                pvp: form.pvp.checked,
-                spawnAnimals: form.spawnAnimals.checked,
-                spawnMonsters: form.spawnMonsters.checked
-            }
+            maxPlayers: parseInt(form.maxPlayers.value) || 20,
+            viewDistance: parseInt(form.viewDistance.value) || 10,
+            difficulty: form.difficulty.value,
+            gamemode: form.gamemode.value,
+            pvp: form.pvp.checked,
+            spawnAnimals: form.spawnAnimals.checked,
+            spawnMonsters: form.spawnMonsters.checked
         };
 
-        // Save configuration
         localStorage.setItem(`server-${serverData.name}`, JSON.stringify(serverData));
-
         window.minecraft.logger.info(`Creating server: ${JSON.stringify(serverData)}`);
         const result = await window.minecraft.server.create(serverData);
 
@@ -1187,7 +954,6 @@ document.getElementById('serverForm')?.addEventListener('submit', async (e) => {
         window.minecraft.logger.info(`Server "${serverData.name}" created successfully`);
         submitButton.textContent = 'Success!';
         form.reset();
-        await updateServerList();
     } catch (error) {
         window.minecraft.logger.error(`Server creation failed: ${error.message}`);
         submitButton.textContent = 'Failed!';
@@ -1199,6 +965,12 @@ document.getElementById('serverForm')?.addEventListener('submit', async (e) => {
     }
 });
 
+// Call this when the page loads
+window.addEventListener('DOMContentLoaded', () => {
+    // ...existing DOMContentLoaded code...
+    updateServerList();
+});
+
 // Add server log monitoring
 window.minecraft.server.onLog((data) => {
     const logContent = document.getElementById('serverLogContent');
@@ -1206,11 +978,11 @@ window.minecraft.server.onLog((data) => {
     logEntry.className = `server-log-entry ${data.level}`;
     logEntry.textContent = `[${new Date(data.timestamp).toLocaleTimeString()}] [${data.server}] ${data.message}`;
     logContent.appendChild(logEntry);
-    
+
     if (logContent.children.length > 1000) {
         logContent.removeChild(logContent.firstChild);
     }
-    
+
     logContent.scrollTop = logContent.scrollHeight;
 });
 
@@ -1257,7 +1029,6 @@ function showUpdateNotification(updateData) {
     notification.innerHTML = `
         <div class="update-notification-content">
             <div class="update-notification-header">
-                <h3>Update Available</h3>
                 <button class="update-notification-close">✕</button>
             </div>
             <div class="update-notification-body">
@@ -1388,6 +1159,62 @@ window.addEventListener('DOMContentLoaded', () => {
         // Load saved update channel preference
         const savedChannel = localStorage.getItem('updateChannel') || 'stable';
         document.getElementById('update-channel').value = savedChannel;
+    }
+});
+
+// Function to ensure all installed versions have profiles
+async function checkAndCreateMissingProfiles() {
+    console.log('Checking for missing profiles for installed versions...');
+    try {
+        const result = await window.minecraft.profiles.createMissing();
+        if (result.success) {
+            console.log(`Profile check complete: ${result.created} created, ${result.existing} already exist`);
+            if (result.created > 0) {
+                // Refresh the profiles list if any were created
+                await loadProfiles();
+            }
+        } else {
+            console.error('Failed to check for missing profiles:', result.error);
+        }
+    } catch (error) {
+        console.error('Error checking for missing profiles:', error);
+    }
+}
+
+// Add a button handler for profile import
+document.getElementById('importMinecraftProfiles').addEventListener('click', async () => {
+    try {
+        // First try the default location
+        showProgress('Importing profiles', 'Checking for Minecraft profiles...');
+        const result = await window.minecraft.profiles.importFromMinecraft();
+        hideProgress();
+        
+        if (result.success) {
+            showNotification(`Successfully imported ${result.imported} profiles`);
+            // Refresh the profiles list
+            await loadProfiles();
+        } else if (result.error === 'Minecraft profiles not found') {
+            // If default location doesn't work, let user select a file
+            const fileResult = await window.minecraft.profiles.selectMinecraftProfilesPath();
+            if (!fileResult.canceled && fileResult.path) {
+                showProgress('Importing profiles', 'Importing from selected file...');
+                const customResult = await window.minecraft.profiles.importFromMinecraft(fileResult.path);
+                hideProgress();
+                
+                if (customResult.success) {
+                    showNotification(`Successfully imported ${customResult.imported} profiles`);
+                    // Refresh the profiles list
+                    await loadProfiles();
+                } else {
+                    showError(`Failed to import profiles: ${customResult.error}`);
+                }
+            }
+        } else {
+            showError(`Failed to import profiles: ${result.error}`);
+        }
+    } catch (error) {
+        hideProgress();
+        showError(`Profile import error: ${error.message}`);
     }
 });
 
