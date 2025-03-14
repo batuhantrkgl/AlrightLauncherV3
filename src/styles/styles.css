@@ -13,6 +13,10 @@
     --transition-speed: 0.3s;
     --gradient-primary: linear-gradient(45deg, var(--primary-color), #ff1a1a);
     --gradient-text: linear-gradient(45deg, var(--primary-color), #ff1a1a);
+    --card-bg: var(--panel-bg);
+    --border-color: var(--glass-border);
+    --text-muted: #777777;
+    --primary-color-dark: #6b0000;
 }
 
 /* Dark theme variables */
@@ -29,6 +33,170 @@
     --button-text: white;
     --gradient-primary: linear-gradient(45deg, #ff1a1a, #ff4d4d);
     --gradient-text: linear-gradient(45deg, #ff3333, #ff6666);
+    --card-bg: rgba(30, 30, 30, 0.95);
+    --border-color: rgba(255, 255, 255, 0.1);
+    --text-muted: #bbbbbb;
+    --primary-color-dark: #cc0000;
+}
+
+/* Theme One: Pale Gold and Dark Olive */
+[data-theme="gold-olive"] {
+    --primary-color: #B39F5F;
+    --secondary-color: #202216;
+    --text-color: #202216;
+    --bg-gradient-1: #F2DE9B;
+    --bg-gradient-2: #E5D28C;
+    --panel-bg: rgba(242, 222, 155, 0.95);
+    --glass-bg: rgba(242, 222, 155, 0.2);
+    --glass-border: rgba(32, 34, 22, 0.2);
+    --button-bg: #F2DE9B;
+    --button-text: #202216;
+    --gradient-primary: linear-gradient(45deg, #B39F5F, #D4BE7F);
+    --gradient-text: linear-gradient(45deg, #776A3F, #B39F5F);
+    --card-bg: rgba(242, 222, 155, 0.95);
+    --border-color: rgba(32, 34, 22, 0.2);
+    --text-muted: #66654B;
+    --primary-color-dark: #8E7E4B;
+}
+
+/* Theme Two: Cool Teal and Ivory White */
+[data-theme="teal-ivory"] {
+    --primary-color: #5C899D;
+    --secondary-color: #FFFCEF;
+    --text-color: #333333;
+    --bg-gradient-1: #FFFCEF;
+    --bg-gradient-2: #F7F4E7;
+    --panel-bg: rgba(255, 252, 239, 0.95);
+    --glass-bg: rgba(255, 252, 239, 0.2);
+    --glass-border: rgba(92, 137, 157, 0.2);
+    --button-bg: #FFFCEF;
+    --button-text: #5C899D;
+    --gradient-primary: linear-gradient(45deg, #5C899D, #7CA7B8);
+    --gradient-text: linear-gradient(45deg, #456A7A, #5C899D);
+    --card-bg: rgba(255, 252, 239, 0.95);
+    --border-color: rgba(92, 137, 157, 0.2);
+    --text-muted: #7A7A7A;
+    --primary-color-dark: #456A7A;
+}
+
+/* Theme Three: Deep Plum and Soft Green */
+[data-theme="plum-green"] {
+    --primary-color: #673147;
+    --secondary-color: #A0C2AE;
+    --text-color: #333333;
+    --bg-gradient-1: #ECF4EF;
+    --bg-gradient-2: #D9E8DF;
+    --panel-bg: rgba(236, 244, 239, 0.95);
+    --glass-bg: rgba(236, 244, 239, 0.2);
+    --glass-border: rgba(103, 49, 71, 0.2);
+    --button-bg: #ECF4EF;
+    --button-text: #673147;
+    --gradient-primary: linear-gradient(45deg, #673147, #864E67);
+    --gradient-text: linear-gradient(45deg, #4D2535, #673147);
+    --card-bg: rgba(236, 244, 239, 0.95);
+    --border-color: rgba(103, 49, 71, 0.2);
+    --text-muted: #7A7A7A;
+    --primary-color-dark: #4D2535;
+}
+
+/* Theme Four: Antique White and Puce */
+[data-theme="antique-puce"] {
+    --primary-color: #CC8899;
+    --secondary-color: #FAEBD7;
+    --text-color: #333333;
+    --bg-gradient-1: #FAEBD7;
+    --bg-gradient-2: #F5E6D2;
+    --panel-bg: rgba(250, 235, 215, 0.95);
+    --glass-bg: rgba(250, 235, 215, 0.2);
+    --glass-border: rgba(204, 136, 153, 0.2);
+    --button-bg: #FAEBD7;
+    --button-text: #CC8899;
+    --gradient-primary: linear-gradient(45deg, #CC8899, #D9A3B0);
+    --gradient-text: linear-gradient(45deg, #AA6677, #CC8899);
+    --card-bg: rgba(250, 235, 215, 0.95);
+    --border-color: rgba(204, 136, 153, 0.2);
+    --text-muted: #7A7A7A;
+    --primary-color-dark: #AA6677;
+}
+
+/* Theme Five: Soft Beige and Muted Tan */
+[data-theme="beige-tan"] {
+    --primary-color: #B19079;
+    --secondary-color: #EFEBE0;
+    --text-color: #333333;
+    --bg-gradient-1: #EFEBE0;
+    --bg-gradient-2: #E6E2D7;
+    --panel-bg: rgba(239, 235, 224, 0.95);
+    --glass-bg: rgba(239, 235, 224, 0.2);
+    --glass-border: rgba(177, 144, 121, 0.2);
+    --button-bg: #EFEBE0;
+    --button-text: #B19079;
+    --gradient-primary: linear-gradient(45deg, #B19079, #C4A88F);
+    --gradient-text: linear-gradient(45deg, #8D725F, #B19079);
+    --card-bg: rgba(239, 235, 224, 0.95);
+    --border-color: rgba(177, 144, 121, 0.2);
+    --text-muted: #7A7A7A;
+    --primary-color-dark: #8D725F;
+}
+
+/* Theme Six: Deep Charcoal and Muted Lilac */
+[data-theme="charcoal-lilac"] {
+    --primary-color: #D6CFE1;
+    --secondary-color: #2E2E2E;
+    --text-color: #ffffff;
+    --bg-gradient-1: #2E2E2E;
+    --bg-gradient-2: #3A3A3A;
+    --panel-bg: rgba(46, 46, 46, 0.95);
+    --glass-bg: rgba(46, 46, 46, 0.2);
+    --glass-border: rgba(214, 207, 225, 0.2);
+    --button-bg: #3A3A3A;
+    --button-text: white;
+    --gradient-primary: linear-gradient(45deg, #D6CFE1, #E3DFF0);
+    --gradient-text: linear-gradient(45deg, #C7BDD8, #D6CFE1);
+    --card-bg: rgba(46, 46, 46, 0.95);
+    --border-color: rgba(214, 207, 225, 0.2);
+    --text-muted: #bbbbbb;
+    --primary-color-dark: #C7BDD8;
+}
+
+/* Theme Seven: Coffee Brown and Silver Gray */
+[data-theme="coffee-gray"] {
+    --primary-color: #6F5A4B;
+    --secondary-color: #E9E9EA;
+    --text-color: #333333;
+    --bg-gradient-1: #E9E9EA;
+    --bg-gradient-2: #DFDFE0;
+    --panel-bg: rgba(233, 233, 234, 0.95);
+    --glass-bg: rgba(233, 233, 234, 0.2);
+    --glass-border: rgba(111, 90, 75, 0.2);
+    --button-bg: #E9E9EA;
+    --button-text: #6F5A4B;
+    --gradient-primary: linear-gradient(45deg, #6F5A4B, #8F7965);
+    --gradient-text: linear-gradient(45deg, #574537, #6F5A4B);
+    --card-bg: rgba(233, 233, 234, 0.95);
+    --border-color: rgba(111, 90, 75, 0.2);
+    --text-muted: #7A7A7A;
+    --primary-color-dark: #574537;
+}
+
+/* Theme Eight: Fiery Coral and Dark Ruby */
+[data-theme="coral-ruby"] {
+    --primary-color: #F77051;
+    --secondary-color: #5D0516;
+    --text-color: #ffffff;
+    --bg-gradient-1: #5D0516;
+    --bg-gradient-2: #7A0A21;
+    --panel-bg: rgba(93, 5, 22, 0.95);
+    --glass-bg: rgba(93, 5, 22, 0.2);
+    --glass-border: rgba(247, 112, 81, 0.2);
+    --button-bg: #7A0A21;
+    --button-text: white;
+    --gradient-primary: linear-gradient(45deg, #F77051, #F99076);
+    --gradient-text: linear-gradient(45deg, #F55937, #F77051);
+    --card-bg: rgba(93, 5, 22, 0.95);
+    --border-color: rgba(247, 112, 81, 0.2);
+    --text-muted: #bbbbbb;
+    --primary-color-dark: #F55937;
 }
 
 body {
@@ -1449,4 +1617,28 @@ body, .left-panel, .right-panel, .play-button, .version-dropdown,
 
 .settings-modal.active {
     display: flex;
+}
+
+.settings-toggle {
+    position: fixed;
+    top: 1rem;
+    right: 1rem;
+    background: var(--panel-bg);
+    backdrop-filter: blur(10px);
+    color: var(--primary-color);
+    border: 1px solid var(--glass-border);
+    padding: 0.8rem;
+    cursor: pointer;
+    border-radius: 8px;
+    z-index: 1001;
+    transition: all var(--transition-speed);
+    box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.settings-toggle:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(0,0,0,0.15);
 }

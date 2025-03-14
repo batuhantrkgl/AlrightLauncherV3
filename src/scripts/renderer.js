@@ -13,6 +13,13 @@ if (!window.minecraft?.logger) {
     };
 }
 
+// Initialize variables for toggle switches
+let offlineMode = false;  
+let skipVerification = false;
+let offlineToggle = null;
+let skipVerificationToggle = null;
+let themeSelector = null;
+
 // Add CSS for version badges (add this near the top of the file)
 const styleElement = document.createElement('style');
 styleElement.textContent = `
@@ -339,6 +346,11 @@ window.minecraft.logger.addLogListener(addLogEntry);
 window.addEventListener('DOMContentLoaded', async () => {
     window.minecraft.logger.info('=== Loading saved settings ===');
     
+    // Initialize toggle references
+    offlineToggle = document.getElementById('offline-toggle');
+    skipVerificationToggle = document.getElementById('skip-verification-toggle');
+    themeSelector = document.getElementById('theme-selector');
+    
     // Load previously used username
     const savedUsername = localStorage.getItem('lastUsername');
     if (savedUsername) {
@@ -370,6 +382,26 @@ window.addEventListener('DOMContentLoaded', async () => {
     const savedTheme = localStorage.getItem('theme');
     window.minecraft.logger.info(`Saved theme: ${savedTheme || 'default'}`);
     
+    // Apply the saved theme or default to light
+    applyTheme(savedTheme || 'light');
+    
+    // Set up theme selector event listener
+    if (themeSelector) {
+        themeSelector.value = savedTheme || 'light';
+        themeSelector.addEventListener('change', (e) => {
+            applyTheme(e.target.value);
+        });
+    }
+    
+    // Set up theme toggle for backward compatibility
+    const themeToggle = document.getElementById('theme-toggle');
+    if (themeToggle) {
+        themeToggle.checked = (savedTheme === 'dark');
+        themeToggle.addEventListener('change', (e) => {
+            applyTheme(e.target.checked ? 'dark' : 'light');
+        });
+    }
+    
     // Load fullscreen setting
     const savedFullscreen = localStorage.getItem('fullscreen');
     window.minecraft.logger.info(`Saved fullscreen: ${savedFullscreen || 'default'}`);
@@ -383,9 +415,35 @@ window.addEventListener('DOMContentLoaded', async () => {
     // Apply settings
     offlineMode = savedOfflineMode;
     skipVerification = savedSkipVerification;
-    offlineToggle.checked = offlineMode;
-    skipVerificationToggle.checked = skipVerification;
-    skipVerificationToggle.disabled = !offlineMode;
+    
+    if (offlineToggle) {
+        offlineToggle.checked = offlineMode;
+        
+        // Add event listener for offline toggle
+        offlineToggle.addEventListener('change', (e) => {
+            offlineMode = e.target.checked;
+            localStorage.setItem('offlineMode', offlineMode);
+            
+            // Enable/disable skip verification toggle
+            if (skipVerificationToggle) {
+                skipVerificationToggle.disabled = !offlineMode;
+            }
+            
+            window.minecraft.logger.info(`Offline mode ${offlineMode ? 'enabled' : 'disabled'}`);
+        });
+    }
+    
+    if (skipVerificationToggle) {
+        skipVerificationToggle.checked = skipVerification;
+        skipVerificationToggle.disabled = !offlineMode;
+        
+        // Add event listener for skip verification toggle
+        skipVerificationToggle.addEventListener('change', (e) => {
+            skipVerification = e.target.checked;
+            localStorage.setItem('skipVerification', skipVerification);
+            window.minecraft.logger.info(`Skip verification ${skipVerification ? 'enabled' : 'disabled'}`);
+        });
+    }
     
     // If offline mode is enabled, update installed versions
     if (offlineMode) {
@@ -415,8 +473,56 @@ window.addEventListener('DOMContentLoaded', async () => {
     await checkAndCreateMissingProfiles();
 });
 
-// Check Java on startup
-window.minecraft.checkJava();
+// Add the missing updateInstalledVersions function if it doesn't exist
+async function updateInstalledVersions() {
+    try {
+        const installedVersions = await window.minecraft.offline.getInstalledVersions();
+        window.minecraft.logger.info(`Found ${installedVersions.length} installed versions`);
+    } catch (error) {
+        window.minecraft.logger.error(`Failed to get installed versions: ${error.message}`);
+    }
+}
+
+// Add missing checkAndCreateMissingProfiles function if needed
+async function checkAndCreateMissingProfiles() {
+    try {
+        if (window.minecraft.profiles && window.minecraft.profiles.createMissing) {
+            const result = await window.minecraft.profiles.createMissing();
+            window.minecraft.logger.info(`Checked for missing profiles: ${result.success ? 'success' : 'failed'}`);
+        }
+    } catch (error) {
+        window.minecraft.logger.error(`Failed to check missing profiles: ${error.message}`);
+    }
+}
+
+// Add theme handling function
+function applyTheme(themeName) {
+    // If no theme is specified, use light theme
+    if (!themeName) themeName = 'light';
+    
+    // Set the data-theme attribute on the document body
+    if (themeName === 'light') {
+        document.body.removeAttribute('data-theme');
+    } else {
+        document.body.setAttribute('data-theme', themeName);
+    }
+    
+    // Save the theme preference
+    localStorage.setItem('theme', themeName);
+    
+    // Update any UI elements that show the theme status
+    if (themeSelector) {
+        themeSelector.value = themeName;
+    }
+    
+    // If using dark theme, also set the theme toggle
+    const themeToggle = document.getElementById('theme-toggle');
+    if (themeToggle) {
+        themeToggle.checked = (themeName === 'dark');
+    }
+    
+    window.minecraft.logger.info(`Applied theme: ${themeName}`);
+}
 
 // Add these global variables at the top of the file
 let gameRunning = false;
@@ -1010,6 +1116,265 @@ window.minecraft.onInstallProgress((data) => {
 });
 
 // Update System
+
+// Setup update listeners as early as possible
+window.minecraft.updates.onUpdateAvailable((data) => {
+    updateInfo = data;
+    window.minecraft.logger.info(`Update available: ${data.remoteVersion}`);
+    showUpdateNotification(data);
+});
+
+window.minecraft.updates.onDownloadProgress((data) => {
+    updateDownloadProgress(data.progress);
+});
+
+function showUpdateNotification(updateData) {
+    const notification = document.createElement('div');
+    notification.className = 'update-notification';
+    notification.innerHTML = `
+        <div class="update-notification-content">
+            <div class="update-notification-header">
+                <button class="update-notification-close">✕</button>
+            </div>
+            <div class="update-notification-body">
+                <p>Version ${updateData.remoteVersion} is available.</p>
+                <p>You are currently using version ${updateData.currentVersion}.</p>
+                ${updateData.releaseNotes ? 
+                  `<div class="update-release-notes">${updateData.releaseNotes}</div>` : ''}
+            </div>
+            <div class="update-notification-footer">
+                <button class="update-notification-download">Download & Install</button>
+                <button class="update-notification-later">Later</button>
+            </div>
+        </div>
+    `;
+    
+    document.body.appendChild(notification);
+    
+    notification.querySelector('.update-notification-close').addEventListener('click', () => {
+        notification.remove();
+    });
+    
+    notification.querySelector('.update-notification-later').addEventListener('click', () => {
+        notification.remove();
+    });
+    
+    notification.querySelector('.update-notification-download').addEventListener('click', async () => {
+        notification.remove();
+        await downloadAndInstallUpdate(updateData);
+    });
+}
+
+async function downloadAndInstallUpdate(updateData) {
+    try {
+        // Show progress overlay
+        showProgress(true);
+        updateProgress(0, 'Preparing update download...');
+        
+        // Start download
+        const downloadResult = await window.minecraft.updates.downloadUpdate(updateData);
+        
+        if (downloadResult.error) {
+            throw new Error(downloadResult.error);
+        }
+        
+        updateProgress(100, 'Download complete', 'Preparing to install...');
+        
+        // Install update
+        const installResult = await window.minecraft.updates.installUpdate(downloadResult);
+        
+        if (installResult.error) {
+            throw new Error(installResult.error);
+        }
+        
+        // The app will restart as part of the installation
+    } catch (error) {
+        window.minecraft.logger.error(`Update failed: ${error.message}`);
+        updateProgress(0, 'Update Failed', error.message);
+        setTimeout(() => showProgress(false), 3000);
+    }
+}
+
+function updateDownloadProgress(progress) {
+    updateProgress(progress, 'Downloading Update...', `${progress}% complete`);
+}
+
+// Add check for updates button to settings
+window.addEventListener('DOMContentLoaded', () => {
+    // ...existing code...
+    
+    // Add update channel selector
+    const gameSettingsSection = document.querySelector('.settings-section:nth-of-type(4)');
+    if (gameSettingsSection) {
+        // Update channel selector
+        const updateChannelContainer = document.createElement('div');
+        updateChannelContainer.className = 'setting-item';
+        updateChannelContainer.innerHTML = `
+            <label for="update-channel">Update Channel:</label>
+            <select id="update-channel">
+                <option value="stable">Stable</option>
+                <option value="beta">Beta</option>
+            </select>
+        `;
+        gameSettingsSection.appendChild(updateChannelContainer);
+        
+        // Check for updates button
+        const checkUpdatesContainer = document.createElement('div');
+        checkUpdatesContainer.className = 'setting-item';
+        const checkUpdatesBtn = document.createElement('button');
+        checkUpdatesBtn.className = 'settings-button';
+        checkUpdatesBtn.textContent = 'Check for Updates';
+        checkUpdatesBtn.addEventListener('click', async () => {
+            const channel = document.getElementById('update-channel').value;
+            localStorage.setItem('updateChannel', channel);
+            window.minecraft.logger.info(`Checking for updates in ${channel} channel...`);
+            
+            try {
+                checkUpdatesBtn.disabled = true;
+                checkUpdatesBtn.textContent = 'Checking...';
+                
+                const result = await window.minecraft.updates.checkForUpdates(channel);
+                
+                if (result.error) {
+                    throw new Error(result.error);
+                }
+                
+                if (result.updateAvailable) {
+                    updateInfo = result;
+                    showUpdateNotification(result);
+                    checkUpdatesBtn.textContent = 'Update Available';
+                } else {
+                    checkUpdatesBtn.textContent = 'Up to Date';
+                    window.minecraft.logger.info('No updates available');
+                }
+            } catch (error) {
+                window.minecraft.logger.error(`Update check failed: ${error.message}`);
+                checkUpdatesBtn.textContent = 'Check Failed';
+            } finally {
+                setTimeout(() => {
+                    checkUpdatesBtn.disabled = false;
+                    checkUpdatesBtn.textContent = 'Check for Updates';
+                }, 3000);
+            }
+        });
+        
+        checkUpdatesContainer.appendChild(checkUpdatesBtn);
+        gameSettingsSection.appendChild(checkUpdatesContainer);
+        
+        // Load saved update channel preference
+        const savedChannel = localStorage.getItem('updateChannel') || 'stable';
+        document.getElementById('update-channel').value = savedChannel;
+    }
+});
+
+// Function to ensure all installed versions have profiles
+async function checkAndCreateMissingProfiles() {
+    console.log('Checking for missing profiles for installed versions...');
+    try {
+        const result = await window.minecraft.profiles.createMissing();
+        if (result.success) {
+            console.log(`Profile check complete: ${result.created} created, ${result.existing} already exist`);
+            if (result.created > 0) {
+                // Refresh the profiles list if any were created
+                await loadProfiles();
+            }
+        } else {
+            console.error('Failed to check for missing profiles:', result.error);
+        }
+    } catch (error) {
+        console.error('Error checking for missing profiles:', error);
+    }
+}
+
+// Add a button handler for profile import
+document.getElementById('importMinecraftProfiles').addEventListener('click', async () => {
+    try {
+        // First try the default location
+        showProgress('Importing profiles', 'Checking for Minecraft profiles...');
+        const result = await window.minecraft.profiles.importFromMinecraft();
+        hideProgress();
+        
+        if (result.success) {
+            showNotification(`Successfully imported ${result.imported} profiles`);
+            // Refresh the profiles list
+            await loadProfiles();
+        } else if (result.error === 'Minecraft profiles not found') {
+            // If default location doesn't work, let user select a file
+            const fileResult = await window.minecraft.profiles.selectMinecraftProfilesPath();
+            if (!fileResult.canceled && fileResult.path) {
+                showProgress('Importing profiles', 'Importing from selected file...');
+                const customResult = await window.minecraft.profiles.importFromMinecraft(fileResult.path);
+                hideProgress();
+                
+                if (customResult.success) {
+                    showNotification(`Successfully imported ${customResult.imported} profiles`);
+                    // Refresh the profiles list
+                    await loadProfiles();
+                } else {
+                    showError(`Failed to import profiles: ${customResult.error}`);
+                }
+            }
+        } else {
+            showError(`Failed to import profiles: ${result.error}`);
+        }
+    } catch (error) {
+        hideProgress();
+        showError(`Profile import error: ${error.message}`);
+    }
+});
+
+// Add settings modal functionality
+const settingsModal = document.getElementById('settingsModal');
+const settingsToggle = document.querySelector('.settings-toggle');
+const settingsClose = document.querySelector('.settings-close');
+
+// Open settings modal when settings toggle is clicked
+settingsToggle.addEventListener('click', () => {
+    settingsModal.classList.add('active');
+    window.minecraft.logger.info('Settings modal opened');
+});
+
+// Close settings modal when close button is clicked
+settingsClose.addEventListener('click', () => {
+    settingsModal.classList.remove('active');
+    window.minecraft.logger.info('Settings modal closed');
+});
+
+// Close settings modal when clicking outside the content
+settingsModal.addEventListener('click', (e) => {
+    // If the click is on the modal background, not on the content
+    if (e.target === settingsModal) {
+        settingsModal.classList.remove('active');
+    }
+});
+
+// Tab switching functionality
+const settingsTabs = document.querySelectorAll('.settings-tab');
+const tabContents = document.querySelectorAll('.tab-content');
+
+settingsTabs.forEach(tab => {
+    tab.addEventListener('click', () => {
+        const targetTab = tab.getAttribute('data-tab');
+        
+        // Remove active class from all tabs and contents
+        settingsTabs.forEach(t => t.classList.remove('active'));
+        tabContents.forEach(c => c.classList.remove('active'));
+        
+        // Add active class to clicked tab and corresponding content
+        tab.classList.add('active');
+        document.getElementById(targetTab).classList.add('active');
+    });
+});
+
+window.minecraft.onInstallProgress((data) => {
+    updateProgress(
+        data.percent,
+        data.phase,
+        data.detail + ' (' + Math.round(data.percent) + '%)'
+    );
+});
+
+// Update System
 let updateInfo = null;
 
 // Setup update listeners as early as possible
@@ -1218,4 +1583,4 @@ document.getElementById('importMinecraftProfiles').addEventListener('click', asy
     }
 });
 
-// ...existing code...
+

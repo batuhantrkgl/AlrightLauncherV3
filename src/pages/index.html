@@ -58,10 +58,20 @@
         </div>
     </div>
 
-    <button class="debug-toggle">
+    <!-- i have no idea but when i remove this, code don't work wtf.-->
+    <button class="debug-toggle" style="display: none;">
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <circle cx="12" cy="12" r="3"></circle>
             <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+        </svg>
+    </button>
+    
+    <!-- Add settings toggle button -->
+    <button class="settings-toggle">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="1"></circle>
+            <circle cx="19" cy="12" r="1"></circle>
+            <circle cx="5" cy="12" r="1"></circle>
         </svg>
     </button>
 
@@ -123,6 +133,22 @@
                 <div class="settings-section">
                     <h3>Appearance</h3>
                     <div class="setting-item">
+                        <label for="theme-selector">Theme</label>
+                        <select id="theme-selector" class="theme-selector">
+                            <option value="light">Light (Default)</option>
+                            <option value="dark">Dark</option>
+                            <option value="gold-olive">Pale Gold & Dark Olive</option>
+                            <option value="teal-ivory">Cool Teal & Ivory White</option>
+                            <option value="plum-green">Deep Plum & Soft Green</option>
+                            <option value="antique-puce">Antique White & Puce</option>
+                            <option value="beige-tan">Soft Beige & Muted Tan</option>
+                            <option value="charcoal-lilac">Deep Charcoal & Muted Lilac</option>
+                            <option value="coffee-gray">Coffee Brown & Silver Gray</option>
+                            <option value="coral-ruby">Fiery Coral & Dark Ruby</option>
+                        </select>
+                    </div>
+                    <!-- We're keeping the dark mode toggle for compatibility, but it will be hidden with CSS -->
+                    <div class="setting-item" style="display: none;">
                         <label>Dark Mode</label>
                         <label class="theme-switch">
                             <input type="checkbox" id="theme-toggle">
@@ -304,15 +330,6 @@
         <div class="progress-container">
             <div class="progress-text" id="progressText">Installing...</div>
             <div class="progress-bar">
-                <div class="progress-fill" id="progressFill"></div>
-            </div>
-            <div class="progress-detail" id="progressDetail">Preparing...</div>
-            <div class="progress-logs" id="progressLogs">
-                <!-- Recent logs will be added here dynamically -->
-            </div>
-        </div>
-    </div>
-
     <script src="../scripts/renderer.js"></script>
 </body>
 </html>
