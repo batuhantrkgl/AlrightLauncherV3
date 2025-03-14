@@ -816,6 +816,12 @@ function registerIpcHandlers() {
     });
 }
 
+// Modify the isDevelopmentMode function to ONLY check for --dev flag
+const isDevelopmentMode = () => {
+    // ONLY check for --dev flag in command line arguments
+    return process.argv.includes('--dev');
+};
+
 async function createWindow() {
     // Start mock auth server
     mockAuthServer = new MockAuthServer();
@@ -845,6 +851,9 @@ async function createWindow() {
         frame: true,
         titleBarStyle: 'default'
     });
+
+    // Remove the top menu bar completely
+    mainWindow.setMenu(null);
 
     // Update the file path to use index.html instead of main.html
     const mainHtmlPath = resolveAppPath('src/pages/index.html');
@@ -882,7 +891,24 @@ async function createWindow() {
     // Register IPC handlers before loading the file
     registerIpcHandlers();
 
-    mainWindow.webContents.openDevTools();
+    // Only open DevTools when --dev flag is present
+    if (isDevelopmentMode()) {
+        console.log('Running in development mode with --dev flag, opening DevTools');
+        mainWindow.webContents.openDevTools();
+    } else {
+        console.log('DevTools disabled. Use --dev flag to enable.');
+        
+        // Disable DevTools keyboard shortcuts
+        mainWindow.webContents.on('before-input-event', (event, input) => {
+            // Block Ctrl+Shift+I, F12, and Cmd+Alt+I (macOS)
+            const isDevToolsShortcut = 
+                (input.control && input.shift && input.key.toLowerCase() === 'i') ||
+                (input.key === 'F12') ||
+                (input.meta && input.alt && input.key.toLowerCase() === 'i');
+                
+            if (isDevToolsShortcut) event.preventDefault();
+        });
+    }
 
     mainWindow.webContents.on('did-finish-load', () => {
         console.log('[Main] Window content loaded');
