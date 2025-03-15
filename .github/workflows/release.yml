@@ -2,22 +2,34 @@ name: Build, Release, and Update Beta Info
 
 on:
   push:
+    branches: [main, master]
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      forceRelease:
+        description: 'Force release creation'
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: write
 
 jobs:
   release:
-    runs-on: ubuntu-latest
+    runs-on: windows-latest  # Changed to Windows for native module compatibility
 
     steps:
       - name: Check out Git repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch all history for version determination
 
       - name: Setup Node.js
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
-          node-version: 16
+          node-version: 18  # Updated to Node.js 18 LTS
+          cache: 'npm'  # Enable caching
 
       - name: Install bun
         uses: oven-sh/setup-bun@v1
@@ -26,6 +38,7 @@ jobs:
 
       - name: Get version information
         id: get_version
+        shell: bash
         run: |
           # Check if this is a tag push
           if [[ $GITHUB_REF == refs/tags/v* ]]; then
@@ -50,21 +63,24 @@ jobs:
           fi
 
       - name: Install dependencies
-        run: bun install
+        run: npm ci  # Using npm ci for more reliable installations
 
-      - name: Install Wine
+      - name: Setup Visual Studio Build Tools
         run: |
-          sudo dpkg --add-architecture i386
-          sudo apt-get update
-          sudo apt-get install -y wine64 wine32
+          # Use native Windows environment 
+          echo "Setting up build environment for native modules..."
+          npm config set msvs_version 2019
 
       - name: Build Electron app
-        run: bun run build
+        run: npm run build
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ELECTRON_CACHE: ${{ github.workspace }}/.cache/electron
+          ELECTRON_BUILDER_CACHE: ${{ github.workspace }}/.cache/electron-builder
           
       - name: Scan with VirusTotal
         id: virustotal
+        shell: bash
         run: |
           echo "Scanning executables with VirusTotal..."
           VT_RESULTS=""
@@ -79,49 +95,50 @@ jobs:
                 echo "Scanning $file..."
                 FILE_NAME=$(basename "$file")
                 
+                # Generate hash for manual lookup on VirusTotal
+                FILE_HASH=$(certutil -hashfile "$file" SHA256 | grep -v "hash" | tr -d " \t\n\r")
+                echo "File hash: $FILE_HASH"
+                
                 # Check file size before attempting to upload (limit is ~32MB for VirusTotal API)
-                FILE_SIZE_BYTES=$(stat -c%s "$file")
+                FILE_SIZE_BYTES=$(stat -c%s "$file" 2>/dev/null || stat -f%z "$file")
                 FILE_SIZE_MB=$(echo "scale=2; $FILE_SIZE_BYTES / 1048576" | bc)
-                FILE_SIZE=$(du -h "$file" | cut -f1)
-                echo "File size: $FILE_SIZE ($FILE_SIZE_MB MB)"
+                echo "File size: $FILE_SIZE_MB MB"
+                
+                # Store hash regardless of file size
+                if [ "${{ steps.get_version.outputs.IS_BETA }}" = "true" ]; then
+                  echo "sha256=$FILE_HASH" >> $GITHUB_OUTPUT
+                fi
                 
                 # Skip files larger than 32MB
                 if (( $(echo "$FILE_SIZE_MB > 32" | bc -l) )); then
-                  echo "File too large for VirusTotal API (> 32MB), skipping automated scan"
-                  # Generate hash for manual lookup on VirusTotal
-                  FILE_HASH=$(sha256sum "$file" | awk '{print $1}')
+                  echo "File too large for VirusTotal API (> 32MB), adding manual lookup link"
                   MANUAL_LINK="https://www.virustotal.com/gui/file/$FILE_HASH/detection"
-                  
                   VT_RESULTS="$VT_RESULTS\n- $FILE_NAME: ⚠️ File too large for API upload ($FILE_SIZE_MB MB). [Check manually]($MANUAL_LINK) using hash: \`$FILE_HASH\`"
-                  
-                  # Store hash for updates.json
-                  if [ "${{ steps.get_version.outputs.IS_BETA }}" = "true" ]; then
-                    echo "sha256=$FILE_HASH" >> $GITHUB_OUTPUT
-                  fi
+                  continue
+                fi
+                
+                # Try to get existing analysis first
+                echo "Checking if file was previously analyzed..."
+                EXISTING=$(curl --silent --request GET \
+                  --url "https://www.virustotal.com/api/v3/files/$FILE_HASH" \
+                  --header "x-apikey: ${{ secrets.VT_API_KEY }}")
+                
+                # Check if we got a valid response with results
+                if echo "$EXISTING" | jq -e '.data.attributes.last_analysis_results' >/dev/null 2>&1; then
+                  echo "Existing analysis found, using those results"
+                  MALICIOUS=$(echo "$EXISTING" | jq -r '.data.attributes.last_analysis_stats.malicious')
+                  SUSPICIOUS=$(echo "$EXISTING" | jq -r '.data.attributes.last_analysis_stats.suspicious')
+                  VT_LINK="https://www.virustotal.com/gui/file/$FILE_HASH"
+                  VT_RESULTS="$VT_RESULTS\n- $FILE_NAME: $MALICIOUS malicious, $SUSPICIOUS suspicious - [View Report]($VT_LINK)"
                   continue
                 fi
                 
                 # Upload file to VirusTotal
-                RESPONSE=$(curl --request POST \
+                echo "Uploading file to VirusTotal for analysis..."
+                RESPONSE=$(curl --silent --request POST \
                   --url https://www.virustotal.com/api/v3/files \
                   --header "x-apikey: ${{ secrets.VT_API_KEY }}" \
-                  --form "file=@$file" 2>/dev/null)
-                
-                # Check if response is valid JSON
-                if ! echo "$RESPONSE" | jq . >/dev/null 2>&1; then
-                  echo "Error: Invalid JSON response from VirusTotal API"
-                  echo "Response: $RESPONSE"
-                  VT_RESULTS="$VT_RESULTS\n- $FILE_NAME: Failed to upload (invalid API response)"
-                  continue
-                fi
-                
-                # Check if API returned an error
-                if echo "$RESPONSE" | jq -e '.error' >/dev/null 2>&1; then
-                  ERROR_MSG=$(echo "$RESPONSE" | jq -r '.error.message')
-                  echo "VirusTotal API error: $ERROR_MSG"
-                  VT_RESULTS="$VT_RESULTS\n- $FILE_NAME: API Error - $ERROR_MSG"
-                  continue
-                fi
+                  --form "file=@$file")
                 
                 # Extract analysis ID
                 if ! ANALYSIS_ID=$(echo "$RESPONSE" | jq -r '.data.id' 2>/dev/null); then
@@ -135,41 +152,28 @@ jobs:
                 
                 # Wait for analysis to complete (with timeout)
                 ATTEMPTS=0
-                MAX_ATTEMPTS=10
+                MAX_ATTEMPTS=20
                 STATUS="pending"
                 
                 while [ $ATTEMPTS -lt $MAX_ATTEMPTS ] && [ "$STATUS" != "completed" ]; do
-                  sleep 30
-                  ANALYSIS_RESPONSE=$(curl --request GET \
+                  sleep 15
+                  ANALYSIS_RESPONSE=$(curl --silent --request GET \
                     --url "https://www.virustotal.com/api/v3/analyses/$ANALYSIS_ID" \
-                    --header "x-apikey: ${{ secrets.VT_API_KEY }}" 2>/dev/null)
+                    --header "x-apikey: ${{ secrets.VT_API_KEY }}")
                   
-                  # Check if response is valid JSON
-                  if ! echo "$ANALYSIS_RESPONSE" | jq . >/dev/null 2>&1; then
-                    echo "Error: Invalid JSON response when checking analysis status"
-                    ATTEMPTS=$((ATTEMPTS+1))
-                    continue
-                  fi
-                  
-                  # Extract status
                   STATUS=$(echo "$ANALYSIS_RESPONSE" | jq -r '.data.attributes.status' 2>/dev/null)
                   ATTEMPTS=$((ATTEMPTS+1))
                   echo "Waiting for analysis to complete... Attempt $ATTEMPTS/$MAX_ATTEMPTS (Status: $STATUS)"
                 done
                 
                 if [ "$STATUS" = "completed" ]; then
-                  # Try to extract results
+                  # Extract results
                   if MALICIOUS=$(echo "$ANALYSIS_RESPONSE" | jq -r '.data.attributes.stats.malicious' 2>/dev/null) && \
                      SUSPICIOUS=$(echo "$ANALYSIS_RESPONSE" | jq -r '.data.attributes.stats.suspicious' 2>/dev/null) && \
                      RESOURCE_ID=$(echo "$ANALYSIS_RESPONSE" | jq -r '.meta.file_info.sha256' 2>/dev/null); then
                     
                     VT_LINK="https://www.virustotal.com/gui/file/$RESOURCE_ID"
                     VT_RESULTS="$VT_RESULTS\n- $FILE_NAME: $MALICIOUS malicious, $SUSPICIOUS suspicious - [View Report]($VT_LINK)"
-                    
-                    # Store hash for updates.json
-                    if [ "${{ steps.get_version.outputs.IS_BETA }}" = "true" ]; then
-                      echo "sha256=$RESOURCE_ID" >> $GITHUB_OUTPUT
-                    fi
                   else
                     VT_RESULTS="$VT_RESULTS\n- $FILE_NAME: Analysis completed but unable to extract results"
                   fi
@@ -187,6 +191,7 @@ jobs:
       - name: Create Release
         id: create_release
         uses: softprops/action-gh-release@v1
+        if: ${{ startsWith(github.ref, 'refs/tags/') || steps.get_version.outputs.IS_BETA == 'true' || github.event.inputs.forceRelease == 'true' }}
         with:
           tag_name: ${{ steps.get_version.outputs.VERSION }}
           name: ${{ steps.get_version.outputs.IS_BETA == 'true' && 'Beta Release ' || 'Release ' }}${{ steps.get_version.outputs.VERSION }}
@@ -196,10 +201,15 @@ jobs:
             
             ${{ steps.get_version.outputs.IS_BETA == 'true' && 'This is a beta release and may contain bugs. Use at your own risk.' || (steps.get_version.outputs.IS_TAG == 'false' && 'This is an automated build from the latest commit.' || 'This is a stable release of AlrightLauncher.') }}
             
+            ## Changes
+            ${{ github.event.head_commit.message || 'No description provided' }}
+            
             ## VirusTotal Scan Results
             ${{ env.virustotal_results }}
             
             ## Release Files
+            - 💻 Windows Installer: Includes everything you need to run the launcher
+            - 📝 Latest.yml: Automatic update information file
           files: |
             dist/*.exe
             dist/latest.yml
@@ -209,6 +219,7 @@ jobs:
       # Update updates.json for beta releases
       - name: Update Beta Info in updates.json
         if: steps.get_version.outputs.IS_BETA == 'true'
+        shell: bash
         run: |
           # Get release info from the created release
           VERSION="${{ steps.get_version.outputs.VERSION }}"
@@ -217,7 +228,27 @@ jobs:
           RELEASE_NOTES="${{ steps.create_release.outputs.body || github.event.release.body }}"
           SHA256="${{ steps.virustotal.outputs.sha256 }}"
           
-          # Correctly construct the download URL
+          # Check if updates.json exists, create a default one if not
+          if [ ! -f "updates.json" ]; then
+            echo "Creating default updates.json file"
+            echo '{
+              "stable": {
+                "version": "3.0.0",
+                "releaseDate": "2023-01-01",
+                "downloadUrl": "",
+                "sha256": "",
+                "releaseNotes": "Initial release"
+              },
+              "beta": {
+                "version": "3.0.0",
+                "releaseDate": "2023-01-01",
+                "downloadUrl": "",
+                "sha256": "",
+                "releaseNotes": "Initial beta release"
+              }
+            }' > updates.json
+          fi
+          
           # Find the installer filename from dist directory
           for file in dist/*.exe; do
             if [ -f "$file" ]; then
@@ -239,9 +270,26 @@ jobs:
               .beta.releaseDate = \"$RELEASE_DATE\" | 
               .beta.downloadUrl = \"$DOWNLOAD_URL\" | 
               .beta.sha256 = \"$SHA256\" | 
-              .beta.releaseNotes = $RELEASE_NOTES" updates.json > updates.json.new
+              .beta.releaseNotes = $RELEASE_NOTES" updates.json > updates.json.new || {
+            echo "jq command failed, trying alternative approach"
+            cp updates.json updates.json.bak
+            # Create updated file using Python as fallback
+            python -c "import json, os
+            data = json.load(open('updates.json'))
+            data['beta']['version'] = '$VERSION'
+            data['beta']['releaseDate'] = '$RELEASE_DATE'
+            data['beta']['downloadUrl'] = '$DOWNLOAD_URL'
+            data['beta']['sha256'] = '$SHA256'
+            data['beta']['releaseNotes'] = '''$RELEASE_NOTES'''
+            json.dump(data, open('updates.json.new', 'w'), indent=2)"
+          }
           
-          mv updates.json.new updates.json
+          if [ -f "updates.json.new" ]; then
+            mv updates.json.new updates.json
+          else
+            echo "Failed to create updated updates.json file"
+            exit 1
+          fi
           
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
