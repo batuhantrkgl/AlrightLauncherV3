@@ -243,8 +243,18 @@ async function fetchVersions() {
     }
 }
 
-// Update the version element click handler to display modded versions properly
-versionElement.addEventListener('click', async () => {
+// Add a state variable for modloader visibility
+let showModloaders = localStorage.getItem('showModloaders') === 'true';
+
+// Update the version element click handler to detect Shift key and toggle modloaders
+versionElement.addEventListener('click', async (event) => {
+    // Toggle modloader visibility when Shift is pressed
+    if (event.shiftKey) {
+        showModloaders = !showModloaders;
+        localStorage.setItem('showModloaders', showModloaders);
+        window.minecraft.logger.info(`${showModloaders ? 'Enabled' : 'Disabled'} custom modloaders`);
+    }
+    
     window.minecraft.logger.info('Fetching Minecraft versions...');
     const versions = await fetchVersions();
     window.minecraft.logger.info(`Found ${versions.length} versions`);
@@ -252,8 +262,56 @@ versionElement.addEventListener('click', async () => {
     // Clear existing dropdown content
     dropdown.innerHTML = '';
     
+    // Filter versions based on preference
+    let filteredVersions = versions;
+    if (!showModloaders) {
+        filteredVersions = versions.filter(v => 
+            !v.id.includes('fabric') && 
+            !v.id.includes('forge') && 
+            !v.id.includes('quilt') &&
+            v.type !== 'fabric' && 
+            v.type !== 'forge' && 
+            v.type !== 'quilt'
+        );
+    }
+    
+    // Sort versions - modloaders first, then vanilla
+    const moddedVersions = [];
+    const vanillaVersions = [];
+    
+    // Split into modded and vanilla arrays
+    filteredVersions.forEach(v => {
+        const isFabric = v.id.includes('fabric') || v.type === 'fabric';
+        const isForge = v.id.includes('forge') || v.type === 'forge';
+        const isQuilt = v.id.includes('quilt') || v.type === 'quilt';
+        
+        if (isFabric || isForge || isQuilt) {
+            moddedVersions.push(v);
+        } else {
+            vanillaVersions.push(v);
+        }
+    });
+    
+    // Sort each array separately
+    moddedVersions.sort((a, b) => compareVersions(a.id, b.id));
+    vanillaVersions.sort((a, b) => compareVersions(a.id, b.id));
+    
+    // Combine into a single sorted array (modded first, then vanilla)
+    const sortedVersions = [...moddedVersions, ...vanillaVersions];
+    
+    // Add notification about Shift key if no modloaders are shown
+    if (!showModloaders && moddedVersions.length > 0) {
+        dropdown.insertAdjacentHTML('beforeend', 
+            `<div class="version-item hint-item">
+                <span style="color: #888; font-style: italic; font-size: 0.9em;">
+                    Hold Shift and click to show modloaders
+                </span>
+             </div>`
+        );
+    }
+    
     // Add versions to dropdown with modloader indicators
-    versions.forEach(v => {
+    sortedVersions.forEach(v => {
         // Determine if this is a modded version
         const isFabric = v.id.includes('fabric') || v.type === 'fabric';
         const isForge = v.id.includes('forge') || v.type === 'forge';
@@ -269,11 +327,33 @@ versionElement.addEventListener('click', async () => {
                          isForge ? '<span class="version-badge forge">Forge</span>' : 
                          isQuilt ? '<span class="version-badge quilt">Quilt</span>' : '';
         
+        // Extract clean version number for display
+        let displayVersion = v.id;
+        
+        // Handle complex Fabric version strings (fabric-loader-x.x.x-mcversion)
+        if (isFabric) {
+            // Check for the pattern fabric-loader-x.x.x-mcversion
+            const fabricPattern = /fabric-loader-[\d\.]+-(\d+\.\d+(?:\.\d+)?)/;
+            const fabricMatch = v.id.match(fabricPattern);
+            
+            if (fabricMatch && fabricMatch[1]) {
+                // Extract just the Minecraft version part
+                displayVersion = fabricMatch[1];
+            } else if (v.id.includes('fabric-')) {
+                // Fallback to the simpler pattern if needed
+                displayVersion = v.id.replace('fabric-', '');
+            }
+        } else if (isForge && v.id.includes('forge-')) {
+            displayVersion = v.id.replace('forge-', '');
+        } else if (isQuilt && v.id.includes('quilt-')) {
+            displayVersion = v.id.replace('quilt-', '');
+        }
+        
         // Store the version ID in data-version attribute without any modifications
         dropdown.insertAdjacentHTML('beforeend', 
             `<div class="version-item ${typeClass}" data-version="${v.id}" data-type="${v.type || 'vanilla'}">
                 ${typeBadge}
-                <span class="version-text">${v.id}</span>
+                <span class="version-text">${displayVersion}</span>
              </div>`
         );
     });
@@ -528,6 +608,10 @@ window.addEventListener('DOMContentLoaded', async () => {
     
     // Check for missing profiles after loading versions
     await checkAndCreateMissingProfiles();
+    
+    // Load modloader preference
+    showModloaders = localStorage.getItem('showModloaders') === 'true';
+    window.minecraft.logger.info(`Custom modloaders are ${showModloaders ? 'enabled' : 'disabled'}`);
 });
 
 // Add the missing updateInstalledVersions function if it doesn't exist
