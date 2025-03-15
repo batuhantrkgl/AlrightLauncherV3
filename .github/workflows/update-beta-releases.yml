@@ -2,7 +2,7 @@ name: Update Beta Release Info
 
 on:
   release:
-    types: [published, edited]
+    types: [published]
 
 jobs:
   update-beta-info:
@@ -13,7 +13,23 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
-        
+        with:
+          fetch-depth: 0
+          ref: master
+      
+      - name: Debug output
+        run: |
+          echo "Triggered by release: ${{ github.event.release.tag_name }}"
+          echo "Release has assets: ${{ github.event.release.assets != null }}"
+          echo "Number of assets: ${{ github.event.release.assets.length }}"
+          echo "First asset URL: ${{ github.event.release.assets[0].browser_download_url }}"
+      
+      - name: Wait for release assets
+        run: |
+          # Give GitHub some time to process and attach release assets
+          echo "Waiting for release assets to be available..."
+          sleep 30
+      
       - name: Download release asset and calculate SHA256
         id: hash
         run: |
@@ -60,4 +76,4 @@ jobs:
           git config --local user.name "GitHub Action"
           git add updates.json
           git commit -m "Update beta release info to ${{ github.event.release.tag_name }}"
-          git push
+          git push origin master
