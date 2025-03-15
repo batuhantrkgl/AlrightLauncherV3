@@ -1,4 +1,4 @@
-name: Build and Release
+name: Build, Release, and Update Beta Info
 
 on:
   push:
@@ -93,6 +93,11 @@ jobs:
                   MANUAL_LINK="https://www.virustotal.com/gui/file/$FILE_HASH/detection"
                   
                   VT_RESULTS="$VT_RESULTS\n- $FILE_NAME: ⚠️ File too large for API upload ($FILE_SIZE_MB MB). [Check manually]($MANUAL_LINK) using hash: \`$FILE_HASH\`"
+                  
+                  # Store hash for updates.json
+                  if [ "${{ steps.get_version.outputs.IS_BETA }}" = "true" ]; then
+                    echo "sha256=$FILE_HASH" >> $GITHUB_OUTPUT
+                  fi
                   continue
                 fi
                 
@@ -160,6 +165,11 @@ jobs:
                     
                     VT_LINK="https://www.virustotal.com/gui/file/$RESOURCE_ID"
                     VT_RESULTS="$VT_RESULTS\n- $FILE_NAME: $MALICIOUS malicious, $SUSPICIOUS suspicious - [View Report]($VT_LINK)"
+                    
+                    # Store hash for updates.json
+                    if [ "${{ steps.get_version.outputs.IS_BETA }}" = "true" ]; then
+                      echo "sha256=$RESOURCE_ID" >> $GITHUB_OUTPUT
+                    fi
                   else
                     VT_RESULTS="$VT_RESULTS\n- $FILE_NAME: Analysis completed but unable to extract results"
                   fi
@@ -175,6 +185,7 @@ jobs:
           echo "EOF" >> $GITHUB_ENV
 
       - name: Create Release
+        id: create_release
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ steps.get_version.outputs.VERSION }}
@@ -194,3 +205,47 @@ jobs:
             dist/latest.yml
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Update updates.json for beta releases
+      - name: Update Beta Info in updates.json
+        if: steps.get_version.outputs.IS_BETA == 'true'
+        run: |
+          # Get release info from the created release
+          VERSION="${{ steps.get_version.outputs.VERSION }}"
+          VERSION=${VERSION#v}  # Remove 'v' prefix if present
+          RELEASE_DATE=$(date -u +"%Y-%m-%d")
+          DOWNLOAD_URL="${{ steps.create_release.outputs.upload_url }}"
+          RELEASE_NOTES="${{ steps.create_release.outputs.body || github.event.release.body }}"
+          SHA256="${{ steps.virustotal.outputs.sha256 }}"
+          
+          # Find the actual download URL for the asset
+          if [[ -z "$DOWNLOAD_URL" ]]; then
+            # Get the first asset URL directly from the release assets directory
+            for file in dist/*.exe; do
+              if [ -f "$file" ]; then
+                FILENAME=$(basename "$file")
+                DOWNLOAD_URL="https://github.com/${{ github.repository }}/releases/download/${{ steps.get_version.outputs.VERSION }}/$FILENAME"
+                break
+              fi
+            done
+          fi
+          
+          echo "Using download URL: $DOWNLOAD_URL"
+          
+          # Escape newlines in release notes
+          RELEASE_NOTES=$(echo "$RELEASE_NOTES" | jq -sR .)
+          
+          # Update the updates.json file
+          jq ".beta.version = \"$VERSION\" | 
+              .beta.releaseDate = \"$RELEASE_DATE\" | 
+              .beta.downloadUrl = \"$DOWNLOAD_URL\" | 
+              .beta.sha256 = \"$SHA256\" | 
+              .beta.releaseNotes = $RELEASE_NOTES" updates.json > updates.json.new
+          
+          mv updates.json.new updates.json
+          
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add updates.json
+          git commit -m "Update beta release info to ${{ steps.get_version.outputs.VERSION }}"
+          git push
