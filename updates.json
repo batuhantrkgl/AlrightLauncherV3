@@ -7,10 +7,10 @@
     "releaseNotes": "- Initial stable release\n- Full offline mode support\n- Fixed server creation issues\n- Improved launcher stability"
   },
   "beta": {
-    "version": "3.0.4-beta.ea7c930",
+    "version": "3.0.4-beta.1fd4ff0",
     "releaseDate": "2025-03-15",
-    "downloadUrl": "https://uploads.github.com/repos/batuhantrkgl/AlrightLauncherV3/releases/206013639/assets{?name,label}",
-    "sha256": "c99d96ef44447769130ac5f25bd889f44bf9fb81086bbd285a61dd5106519fdb",
+    "downloadUrl": "https://github.com/batuhantrkgl/AlrightLauncherV3/releases/download/v3.0.4-beta.1fd4ff0/AlrightLauncher-Setup-3.0.4.exe",
+    "sha256": "f60a3b3f41c6163acfd540b763fc77c83b26d4c176455732960bd2a8dabe4e68",
     "releaseNotes": "\n"
   }
 }
