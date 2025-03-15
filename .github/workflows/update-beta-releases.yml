@@ -1,0 +1,76 @@
+name: Update Beta Release Info
+
+on:
+  release:
+    types: [published, edited]
+
+jobs:
+  update-beta-info:
+    # Only run for beta releases
+    if: contains(github.event.release.tag_name, 'beta')
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        
+      - name: Check if release is a beta
+        id: check-beta
+        run: |
+          IS_BETA=$(echo "${{ github.event.release.tag_name }}" | grep -E "beta|alpha|rc" || echo "")
+          if [ -n "$IS_BETA" ]; then
+            echo "is_beta=true" >> $GITHUB_OUTPUT
+          else
+            echo "is_beta=false" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Download release asset and calculate SHA256
+        if: steps.check-beta.outputs.is_beta == 'true'
+        id: hash
+        run: |
+          # Get release info
+          VERSION="${{ github.event.release.tag_name }}"
+          VERSION=${VERSION#v}  # Remove 'v' prefix if present
+          DOWNLOAD_URL="${{ github.event.release.assets[0].browser_download_url }}"
+          
+          # Download the file
+          echo "Downloading asset from $DOWNLOAD_URL"
+          ASSET_NAME=$(basename "$DOWNLOAD_URL")
+          curl -L -o "$ASSET_NAME" "$DOWNLOAD_URL"
+          
+          # Calculate SHA256
+          SHA256=$(sha256sum "$ASSET_NAME" | awk '{print $1}')
+          echo "sha256=$SHA256" >> $GITHUB_OUTPUT
+          echo "SHA256: $SHA256"
+      
+      - name: Update updates.json for beta release
+        if: steps.check-beta.outputs.is_beta == 'true'
+        run: |
+          # Get release info
+          VERSION="${{ github.event.release.tag_name }}"
+          VERSION=${VERSION#v}  # Remove 'v' prefix if present
+          RELEASE_DATE=$(date -u +"%Y-%m-%d")
+          DOWNLOAD_URL="${{ github.event.release.assets[0].browser_download_url }}"
+          RELEASE_NOTES="${{ github.event.release.body }}"
+          SHA256="${{ steps.hash.outputs.sha256 }}"
+          
+          # Escape newlines in release notes
+          RELEASE_NOTES=$(echo "$RELEASE_NOTES" | jq -sR .)
+          
+          # Update the updates.json file
+          jq ".beta.version = \"$VERSION\" | 
+              .beta.releaseDate = \"$RELEASE_DATE\" | 
+              .beta.downloadUrl = \"$DOWNLOAD_URL\" | 
+              .beta.sha256 = \"$SHA256\" | 
+              .beta.releaseNotes = $RELEASE_NOTES" updates.json > updates.json.new
+          
+          mv updates.json.new updates.json
+          
+      - name: Commit and push changes
+        if: steps.check-beta.outputs.is_beta == 'true'
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add updates.json
+          git commit -m "Update beta release info to ${{ github.event.release.tag_name }}"
+          git push

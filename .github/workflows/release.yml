@@ -24,9 +24,30 @@ jobs:
         with:
           bun-version: latest
 
-      - name: Get version
-        id: package-version
-        uses: martinbeentjes/npm-get-version-action@v1.3.1
+      - name: Get version information
+        id: get_version
+        run: |
+          # Check if this is a tag push
+          if [[ $GITHUB_REF == refs/tags/v* ]]; then
+            # For tags, use the tag name
+            VERSION=${GITHUB_REF#refs/tags/}
+            echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+            echo "IS_TAG=true" >> $GITHUB_OUTPUT
+          else
+            # For regular commits, use package.json version + short SHA
+            PKG_VERSION=$(node -p "require('./package.json').version")
+            SHORT_SHA=$(git rev-parse --short HEAD)
+            VERSION="v${PKG_VERSION}-${SHORT_SHA}"
+            echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+            echo "IS_TAG=false" >> $GITHUB_OUTPUT
+          fi
+          
+          # Check if this is a beta release
+          if echo "$VERSION" | grep -E "beta|alpha|rc" > /dev/null; then
+            echo "IS_BETA=true" >> $GITHUB_OUTPUT
+          else
+            echo "IS_BETA=false" >> $GITHUB_OUTPUT
+          fi
 
       - name: Install dependencies
         run: bun install
@@ -57,8 +78,23 @@ jobs:
               if [ -f "$file" ]; then
                 echo "Scanning $file..."
                 FILE_NAME=$(basename "$file")
+                
+                # Check file size before attempting to upload (limit is ~32MB for VirusTotal API)
+                FILE_SIZE_BYTES=$(stat -c%s "$file")
+                FILE_SIZE_MB=$(echo "scale=2; $FILE_SIZE_BYTES / 1048576" | bc)
                 FILE_SIZE=$(du -h "$file" | cut -f1)
-                echo "File size: $FILE_SIZE"
+                echo "File size: $FILE_SIZE ($FILE_SIZE_MB MB)"
+                
+                # Skip files larger than 32MB
+                if (( $(echo "$FILE_SIZE_MB > 32" | bc -l) )); then
+                  echo "File too large for VirusTotal API (> 32MB), skipping automated scan"
+                  # Generate hash for manual lookup on VirusTotal
+                  FILE_HASH=$(sha256sum "$file" | awk '{print $1}')
+                  MANUAL_LINK="https://www.virustotal.com/gui/file/$FILE_HASH/detection"
+                  
+                  VT_RESULTS="$VT_RESULTS\n- $FILE_NAME: ⚠️ File too large for API upload ($FILE_SIZE_MB MB). [Check manually]($MANUAL_LINK) using hash: \`$FILE_HASH\`"
+                  continue
+                fi
                 
                 # Upload file to VirusTotal
                 RESPONSE=$(curl --request POST \
@@ -141,8 +177,14 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: v${{ steps.package-version.outputs.current-version}}-${{ github.run_number }}
+          tag_name: ${{ steps.get_version.outputs.VERSION }}
+          name: ${{ steps.get_version.outputs.IS_BETA == 'true' && 'Beta Release ' || 'Release ' }}${{ steps.get_version.outputs.VERSION }}
+          prerelease: ${{ steps.get_version.outputs.IS_BETA == 'true' || steps.get_version.outputs.IS_TAG == 'false' }}
           body: |
+            ${{ steps.get_version.outputs.IS_BETA == 'true' && '## ⚠️ Beta Release' || (steps.get_version.outputs.IS_TAG == 'false' && '## Automated Build' || '## Stable Release') }}
+            
+            ${{ steps.get_version.outputs.IS_BETA == 'true' && 'This is a beta release and may contain bugs. Use at your own risk.' || (steps.get_version.outputs.IS_TAG == 'false' && 'This is an automated build from the latest commit.' || 'This is a stable release of AlrightLauncher.') }}
+            
             ## VirusTotal Scan Results
             ${{ env.virustotal_results }}
             
