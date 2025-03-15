@@ -64,17 +64,7 @@ jobs:
 
       - name: Install dependencies
         run: bun install
-
-      - name: Setup Visual Studio Build Tools
-        shell: powershell
-        run: |
-          Write-Host "Setting up build environment for native modules..."
-          # Use correct hyphenated syntax for npm config
-          node-gyp configure --msvs_version=2019
-          # Set environment variables as fallback
-          echo "VCINSTALLDIR=C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\VC\" >> $env:GITHUB_ENV
-          echo "VCTargetsPath=C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\MSBuild\Microsoft\VC\v160\" >> $env:GITHUB_ENV
-
+        
       - name: Build Electron app
         run: npm run build
         env:
