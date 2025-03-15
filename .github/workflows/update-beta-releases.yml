@@ -6,31 +6,15 @@ on:
 
 jobs:
   update-beta-info:
-    # Only run for beta releases and skip automated builds
-    if: contains(github.event.release.tag_name, 'beta') && !endsWith(github.event.release.tag_name, github.sha)
+    # Run for any beta release (including automated ones)
+    if: contains(github.event.release.tag_name, 'beta')
     runs-on: ubuntu-latest
     
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
         
-      - name: Check if release is a proper beta release
-        id: check-beta
-        run: |
-          VERSION="${{ github.event.release.tag_name }}"
-          IS_AUTO_BUILD=$(echo "$VERSION" | grep -E -- "-[a-f0-9]{7}$" || echo "")
-          IS_BETA=$(echo "$VERSION" | grep -E "beta|alpha|rc" || echo "")
-          
-          if [ -n "$IS_BETA" ] && [ -z "$IS_AUTO_BUILD" ]; then
-            echo "is_proper_beta=true" >> $GITHUB_OUTPUT
-            echo "This is a proper beta release: $VERSION"
-          else
-            echo "is_proper_beta=false" >> $GITHUB_OUTPUT
-            echo "This is not a proper beta release or is an auto-build: $VERSION"
-          fi
-      
       - name: Download release asset and calculate SHA256
-        if: steps.check-beta.outputs.is_proper_beta == 'true'
         id: hash
         run: |
           # Get release info
@@ -49,7 +33,6 @@ jobs:
           echo "SHA256: $SHA256"
       
       - name: Update updates.json for beta release
-        if: steps.check-beta.outputs.is_proper_beta == 'true'
         run: |
           # Get release info
           VERSION="${{ github.event.release.tag_name }}"
@@ -72,7 +55,6 @@ jobs:
           mv updates.json.new updates.json
           
       - name: Commit and push changes
-        if: steps.check-beta.outputs.is_proper_beta == 'true'
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
