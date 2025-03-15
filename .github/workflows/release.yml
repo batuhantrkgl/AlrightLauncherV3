@@ -34,10 +34,10 @@ jobs:
             echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
             echo "IS_TAG=true" >> $GITHUB_OUTPUT
           else
-            # For regular commits, use package.json version + short SHA
+            # For regular commits, use package.json version + beta + short SHA
             PKG_VERSION=$(node -p "require('./package.json').version")
             SHORT_SHA=$(git rev-parse --short HEAD)
-            VERSION="v${PKG_VERSION}-${SHORT_SHA}"
+            VERSION="v${PKG_VERSION}-beta.${SHORT_SHA}"
             echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
             echo "IS_TAG=false" >> $GITHUB_OUTPUT
           fi
