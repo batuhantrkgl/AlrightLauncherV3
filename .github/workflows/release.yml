@@ -28,7 +28,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 18  # Updated to Node.js 18 LTS
+          node-version: latest
           cache: 'npm'  # Enable caching
 
       - name: Install bun
@@ -63,7 +63,7 @@ jobs:
           fi
 
       - name: Install dependencies
-        run: npm ci  # Using npm ci for more reliable installations
+        run: bun install
 
       - name: Setup Visual Studio Build Tools
         run: |
