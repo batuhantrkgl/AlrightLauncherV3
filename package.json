@@ -1,6 +1,6 @@
 {
   "name": "alrightlauncher",
-  "version": "3.0.4",
+  "version": "3.0.5",
   "description": "Yet Another Minecraft Launcher",
   "author": "Batuhantrkgl",
   "main": "src/scripts/main.js",
@@ -85,6 +85,7 @@
     "buffer-crc32": "^1.0.0",
     "check-disk-space": "^3.4.0",
     "cli-progress": "^3.12.0",
+    "discord-rpc": "^4.0.1",
     "dotenv": "^16.0.3",
     "electron-dl": "^4.0.0",
     "extract-zip": "^2.0.1",

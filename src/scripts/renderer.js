@@ -1223,7 +1223,7 @@ window.minecraft.server.onLog((data) => {
     const logContent = document.getElementById('serverLogContent');
     const logEntry = document.createElement('div');
     logEntry.className = `server-log-entry ${data.level}`;
-    logEntry.textContent = `[${new Date(data.timestamp).toLocaleTimeString()}] [${data.server}] ${data.message}`;
+    logEntry.textContent = `[${new Date(data.timestamp).toLocaleTimeString()}] [${data.server}] ${data.message}`;;
     logContent.appendChild(logEntry);
 
     if (logContent.children.length > 1000) {
@@ -1874,6 +1874,306 @@ async function loadProfiles() {
         window.minecraft.logger.error(`Failed to load profiles: ${error.message}`);
     }
 }
+
+// Add null checks to the updateProgress function to prevent errors when elements don't exist
+function updateProgress(percent, text) {
+    const progressBar = document.querySelector('.progress-bar');
+    const progressText = document.querySelector('.progress-text');
+    
+    // Add null checks to prevent errors
+    if (progressBar) {
+        progressBar.style.width = `${percent}%`;
+    }
+    
+    if (progressText) {
+        progressText.textContent = text || `${percent}%`;
+    }
+    
+    // Log progress to console as fallback
+    console.log(`Progress: ${percent}% - ${text || ''}`);
+}
+
+// In the playGame function or wherever installation is initiated, make sure the progress elements exist
+async function playGame(version) {
+    try {
+        // Ensure progress elements exist in the DOM before starting
+        if (!document.querySelector('.progress-container')) {
+            // Create progress elements if they don't exist
+            const progressContainer = document.createElement('div');
+            progressContainer.className = 'progress-container';
+            
+            const progressBar = document.createElement('div');
+            progressBar.className = 'progress-bar';
+            
+            const progressText = document.createElement('div');
+            progressText.className = 'progress-text';
+            progressText.textContent = '0%';
+            
+            progressContainer.appendChild(progressBar);
+            progressContainer.appendChild(progressText);
+            
+            // Insert into DOM - adjust the selector to where you want to display progress
+            const container = document.querySelector('.game-container') || document.body;
+            container.appendChild(progressContainer);
+        }
+        
+        // Continue with game installation/launch
+        // ...existing code...
+    } catch (error) {
+        console.error('Error in playGame:', error);
+        showNotification('Error', `Failed to start game: ${error.message}`, 'error');
+    }
+}
+
+// ...existing code...
+
+// Add error debugging wrapper to track issues with the play button
+function addErrorDebugging() {
+    // Add debugging for all button clicks
+    document.addEventListener('click', (e) => {
+        if (e.target.tagName === 'BUTTON' || e.target.closest('button')) {
+            console.log('Button clicked:', e.target);
+        }
+    });
+
+    // Override playGame to include debugging
+    const originalPlayGame = window.playGame;
+    window.playGame = function(...args) {
+        console.log('Play button clicked, arguments:', args);
+        try {
+            return originalPlayGame.apply(this, args);
+        } catch (error) {
+            console.error('Error in playGame:', error);
+            alert(`Error launching game: ${error.message}`);
+            return false;
+        }
+    };
+}
+
+// Make sure the DOM is loaded before binding events
+document.addEventListener('DOMContentLoaded', () => {
+    // ...existing code...
+
+    console.log('Binding play button click event');
+    // Make sure the play button is correctly hooked up
+    const playButton = document.querySelector('.play-button');
+    if (playButton) {
+        playButton.removeEventListener('click', playGame); // Remove any existing handlers
+        playButton.addEventListener('click', playGame);
+        console.log('Play button event handler attached');
+    } else {
+        console.error('Play button not found in the DOM');
+    }
+
+    // Add error debugging
+    addErrorDebugging();
+
+    // Add specific handler for installation status events
+    window.minecraft.onInstallationStatus((data) => {
+        console.log('Installation status update:', data);
+        if (data.status === 'started') {
+            showProgress(true);
+            updateProgress(0, `Installing ${data.version}`, 'Starting installation...');
+        } else if (data.status === 'progress') {
+            updateProgress(data.progress, `Installing ${data.version}`, `${data.progress}% complete`);
+        } else if (data.status === 'completed') {
+            updateProgress(100, `Installation Complete`, `${data.version} installed successfully`);
+            setTimeout(() => showProgress(false), 2000);
+        } else if (data.status === 'error') {
+            updateProgress(100, 'Installation Failed', data.error || 'Unknown error');
+            setTimeout(() => showProgress(false), 3000);
+        }
+    });
+
+    // Add handler for asset download progress
+    window.minecraft.onAssetDownloadProgress((data) => {
+        if (!isOperationInProgress) return;
+        updateProgress(data.percent, 'Downloading Assets', 
+            `${data.processed}/${data.total} (${Math.round(data.percent)}%)`);
+    });
+});
+
+// Fix the progress display element creation
+function ensureProgressElements() {
+    // Check if the progress container exists
+    const progressContainer = document.getElementById('progressOverlay');
+    if (!progressContainer) {
+        // Create the progress container
+        const container = document.createElement('div');
+        container.id = 'progressOverlay';
+        container.className = 'progress-overlay';
+        container.style.display = 'none';
+        container.innerHTML = `
+            <div class="progress-modal">
+                <h3 id="progressText">Working...</h3>
+                <div class="progress-bar-container">
+                    <div id="progressFill" class="progress-bar-fill"></div>
+                </div>
+                <p id="progressDetail">Please wait</p>
+                <div id="progressLogs" class="progress-logs"></div>
+            </div>
+        `;
+        document.body.appendChild(container);
+        
+        console.log('Progress elements created');
+    }
+}
+
+// Update the updateProgress function to handle missing elements better
+function updateProgress(percent, text, detail = '') {
+    // Ensure progress elements exist
+    ensureProgressElements();
+    
+    const fill = document.getElementById('progressFill');
+    const textEl = document.getElementById('progressText');
+    const detailEl = document.getElementById('progressDetail');
+    
+    if (fill) fill.style.width = `${percent}%`;
+    if (textEl) textEl.textContent = text || '';
+    if (detailEl) detailEl.textContent = detail || '';
+    
+    // Log progress
+    console.log(`Progress: ${percent}%, ${text}: ${detail}`);
+    
+    // Add to logs
+    updateProgressLogs(`${text}: ${detail}`);
+}
+
+// Completely replace the playGame function to fix issues
+async function playGame() {
+    try {
+        console.log('Play game function called');
+        
+        // Don't allow multiple instances or if game is already running
+        if (isOperationInProgress || gameRunning) {
+            console.log('Operation in progress or game already running, ignoring click');
+            return;
+        }
+        
+        // Get the version and username
+        const versionElement = document.getElementById('version');
+        const usernameElement = document.getElementById('username');
+        
+        if (!versionElement || !usernameElement) {
+            throw new Error('Could not find version or username element');
+        }
+        
+        // Get the version from data-version attribute first, then fallback to text content
+        let version = versionElement.getAttribute('data-version') || versionElement.textContent;
+        const username = usernameElement.textContent;
+        
+        console.log(`Launching version: ${version}, username: ${username}`);
+        
+        // Save both values to localStorage
+        localStorage.setItem('lastUsername', username);
+        localStorage.setItem('lastVersion', version);
+        
+        // Signal that an operation is in progress
+        isOperationInProgress = true;
+        
+        // Show progress UI
+        ensureProgressElements();
+        showProgress(true);
+        updateProgress(0, 'Preparing to launch...', 'Checking installation');
+        
+        // Check if version is installed (simplified check)
+        const installedVersions = await window.minecraft.offline.getInstalledVersions();
+        const isInstalled = installedVersions.some(v => v.id === version);
+        
+        if (!isInstalled) {
+            console.log(`Version ${version} is not installed, installing first`);
+            updateProgress(10, 'Installing Game', `Installing Minecraft ${version}`);
+            
+            try {
+                // Use installVersion method (this triggers Discord RPC via main process)
+                const installResult = await window.minecraft.installVersion(version);
+                
+                if (!installResult) {
+                    throw new Error('Installation failed');
+                }
+                
+                updateProgress(40, 'Installation Complete', 'Preparing to launch game');
+            } catch (installError) {
+                throw new Error(`Installation failed: ${installError.message}`);
+            }
+        }
+        
+        // Check for Java installation
+        updateProgress(50, 'Checking Java', 'Verifying Java installation');
+        const javaCheck = await window.minecraft.checkJava();
+        
+        if (!javaCheck.installed) {
+            throw new Error('Java is not installed. Please install Java to play.');
+        }
+        
+        // Launch the game
+        updateProgress(70, 'Launching Game', `Starting Minecraft ${version}`);
+        
+        console.log('Calling launchGame with:', { version, username, offline: offlineMode });
+        const launchResult = await window.minecraft.launchGame(version, username, {
+            offline: offlineMode
+        });
+        
+        if (!launchResult.success) {
+            throw new Error(launchResult.error || 'Failed to launch game');
+        }
+        
+        // Game launched successfully
+        updateProgress(100, 'Game Launched', 'Minecraft started successfully');
+        gameRunning = true;
+        
+        // Hide progress after a delay
+        setTimeout(() => {
+            showProgress(false);
+            
+            // Hide the launcher if game started successfully
+            if (gameRunning) {
+                window.minecraft.ipc.invoke('hide-window').catch(err => {
+                    console.error('Failed to hide window:', err);
+                });
+            }
+        }, 2000);
+    } catch (error) {
+        console.error('Error launching game:', error);
+        updateProgress(100, 'Error', error.message || 'Unknown error occurred');
+        
+        // Show error message
+        setTimeout(() => {
+            showProgress(false);
+            alert(`Failed to launch game: ${error.message}`);
+        }, 3000);
+    } finally {
+        // Reset operation flag (but not gameRunning - that's cleared when the game exits)
+        setTimeout(() => {
+            isOperationInProgress = false;
+        }, 1000);
+    }
+}
+
+// Overwrite the global playGame function with our new implementation
+window.playGame = playGame;
+
+// ...existing code...
+
+window.addEventListener('DOMContentLoaded', async () => {
+    // ...existing code...
+
+    // Make sure the play button click handler is properly attached
+    const playButton = document.querySelector('.play-button');
+    if (playButton) {
+        // First remove any existing handlers to avoid duplicates
+        playButton.removeEventListener('click', playGame);
+        
+        // Then add a fresh event listener
+        playButton.addEventListener('click', playGame);
+        console.log('Play button click handler attached');
+    } else {
+        console.error('Play button not found in the DOM');
+    }
+    
+    // Create the progress UI elements if they don't exist yet
+    ensureProgressElements();
+});
 
 // ...existing code...
 

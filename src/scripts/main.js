@@ -10,6 +10,7 @@ const MockAuthServer = require('./mock-auth-server');
 const FileManager = require('./fileManager');
 const UpdateService = require('./update-service');
 const logger = require('./logger');
+const discordRPC = require('./discord-rpc');
 
 // Add this helper function at the top level
 function resolveAppPath(relativePath) {
@@ -165,13 +166,60 @@ function registerIpcHandlers() {
 
     ipcMain.handle('is-maximized', () => mainWindow ? mainWindow.isMaximized() : false);
 
-    // Add Minecraft handlers
+    // Update the install-version handler
     ipcMain.handle('install-version', async (event, version) => {
         try {
+            logger.info(`Starting installation of Minecraft ${version}`);
+            
+            // Update Discord RPC status to show installation
+            discordRPC.setInstallingActivity(version);
+            
+            // Notify renderer that installation has started
+            if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.webContents.send('installation-status', {
+                    version,
+                    status: 'started',
+                    progress: 0
+                });
+            }
+            
             const installer = new MinecraftInstaller();
-            return await installer.installVersion(version);
+            
+            // Set mainWindow reference if your installer needs to send progress updates
+            installer.mainWindow = mainWindow;
+            
+            // Install the version
+            const result = await installer.installVersion(version);
+            
+            // Reset Discord RPC after installation completes
+            discordRPC.setDefaultActivity();
+            
+            // Send final status to renderer
+            if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.webContents.send('installation-status', {
+                    version,
+                    status: result ? 'completed' : 'error',
+                    progress: result ? 100 : 0,
+                    error: result ? null : 'Installation failed'
+                });
+            }
+            
+            return result;
         } catch (error) {
-            console.error('Installation error:', error);
+            // Reset Discord RPC on error
+            discordRPC.setDefaultActivity();
+            
+            logger.error(`Installation error for ${version}:`, error);
+            
+            // Send error to renderer
+            if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.webContents.send('installation-status', {
+                    version,
+                    status: 'error',
+                    error: error.message
+                });
+            }
+            
             return false;
         }
     });
@@ -224,10 +272,18 @@ function registerIpcHandlers() {
 
             logger.info(`Game launched successfully with PID: ${result.pid || 'unknown'}`);
             
+            // Update Discord RPC when game launches
+            if (result.success) {
+                discordRPC.setPlayingActivity(version);
+            }
+            
             // Monitor for crashes
             if (result.process) {
                 result.process.on('exit', async (code) => {
                     logger.info(`Game process exited with code: ${code}`);
+                    
+                    // Reset Discord RPC status when game exits
+                    discordRPC.setDefaultActivity();
                     
                     // Check for crash reports only on abnormal exits
                     if (code !== 0) {
@@ -979,6 +1035,9 @@ app.whenReady().then(async () => {
     await ensureDirectories();
     createWindow();
     initializeUpdateService();
+    
+    // Initialize Discord RPC
+    await discordRPC.initialize();
 });
 
 app.on('activate', () => {
@@ -991,6 +1050,8 @@ app.on('window-all-closed', () => {
     if (mockAuthServer) {
         mockAuthServer.stop();
     }
+    // Shut down Discord RPC before quitting
+    discordRPC.shutdown();
     if (process.platform !== 'darwin') {
         app.quit();
     }

@@ -48,9 +48,32 @@ contextBridge.exposeInMainWorld('minecraft', {
             }
         }
     },
-    installVersion: (version) => safeIpcInvoke('install-version', version),
-    launchGame: (version, username, options) => 
-        safeIpcInvoke('launch-game', { version, username, ...options }),
+    // Fix installVersion and make sure it returns a proper Promise
+    installVersion: (version) => {
+        console.log(`Calling install-version for ${version}`);
+        return safeIpcInvoke('install-version', version)
+            .then(result => {
+                console.log(`Install result for ${version}:`, result);
+                return result;
+            })
+            .catch(error => {
+                console.error(`Install error for ${version}:`, error);
+                return false;
+            });
+    },
+    // Fix launchGame to ensure consistency and better error handling
+    launchGame: (version, username, options = {}) => {
+        console.log(`Launching game: ${version} with username ${username}`, options);
+        return safeIpcInvoke('launch-game', { version, username, ...options })
+            .then(result => {
+                console.log('Launch result:', result);
+                return result;
+            })
+            .catch(error => {
+                console.error('Launch error:', error);
+                return { success: false, error: error.message || 'Unknown launch error' };
+            });
+    },
     checkJava: () => safeIpcInvoke('verify-java'),
     isJavaInstalled: () => safeIpcInvoke('verify-java'),
     getVersions: () => safeIpcInvoke('get-versions'),
@@ -166,6 +189,20 @@ contextBridge.exposeInMainWorld('minecraft', {
                 ipcRenderer.on('asset-download-progress', (_, data) => callback(data));
             }
         }
+    },
+    // Ensure consistent installation status event handler
+    onInstallationStatus: (callback) => {
+        if (typeof callback === 'function') {
+            // Remove any existing handler to avoid duplicates
+            ipcRenderer.removeAllListeners('installation-status');
+            ipcRenderer.on('installation-status', (_, data) => {
+                console.log('Installation status received:', data);
+                callback(data);
+            });
+        }
+    },
+    onAssetDownloadProgress: (callback) => {
+        ipcRenderer.on('asset-download-progress', (event, data) => callback(data));
     }
 });
 

@@ -3,10 +3,11 @@ const path = require('path');
 const fetch = require('node-fetch');
 const logger = require('./logger');
 const extract = require('extract-zip');
-const cliProgress = require('cli-progress');
+const cliProgress = require('cli-progress'); // Not currently used
 const AdmZip = require('adm-zip'); // Add this import
 const EventEmitter = require('events'); // Add this import
 const os = require('os'); // Add this for os.tmpdir()
+const discordRPC = require('./discord-rpc'); // Import Discord RPC
 
 class MinecraftInstaller extends EventEmitter { // Extend EventEmitter
     constructor() {
@@ -17,10 +18,19 @@ class MinecraftInstaller extends EventEmitter { // Extend EventEmitter
         this.assetsDir = path.join(this.baseDir, 'assets');
         this.librariesDir = path.join(this.baseDir, 'libraries');
         this.createDirectories();
-        this.mainWindow = require('electron').BrowserWindow.getAllWindows()[0];
+        
+        // Get a fresh reference to the main window
+        this.mainWindow = null;
+        try {
+            const { BrowserWindow } = require('electron');
+            this.mainWindow = BrowserWindow.getAllWindows()[0];
+        } catch (error) {
+            console.error('Failed to get main window reference:', error);
+        }
+        
         this.downloadQueue = [];
         this.isDownloading = false;
-        this.downloadDelay = 100; // 500ms delay between downloads
+        this.downloadDelay = 100; // 100ms delay between downloads
         this.downloadChunkSize = 64 * 1024; // 64KB chunks
     }
 
@@ -33,11 +43,26 @@ class MinecraftInstaller extends EventEmitter { // Extend EventEmitter
     }
 
     async sendProgress(percent, phase, detail) {
-        this.mainWindow.webContents.send('install-progress', {
-            percent,
-            phase,
-            detail
-        });
+        try {
+            // Ensure main window is available and not destroyed
+            if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+                this.mainWindow.webContents.send('installation-status', {
+                    status: 'progress',
+                    progress: percent,
+                    phase,
+                    detail
+                });
+                
+                // Also emit the older progress event format for backwards compatibility
+                this.mainWindow.webContents.send('install-progress', {
+                    percent,
+                    phase,
+                    detail
+                });
+            }
+        } catch (error) {
+            console.error('Error sending progress update:', error);
+        }
     }
 
     async downloadFile(url, destination, description, maxRetries = 3) {
@@ -884,6 +909,32 @@ class MinecraftInstaller extends EventEmitter { // Extend EventEmitter
 
     async installVersion(version) {
         try {
+            console.log(`Starting installation of version: ${version}`);
+            
+            // Update Discord RPC status
+            discordRPC.setInstallingActivity(version);
+            
+            // Get a fresh reference to the main window
+            try {
+                const { BrowserWindow } = require('electron');
+                this.mainWindow = BrowserWindow.getAllWindows()[0];
+            } catch (error) {
+                console.error('Failed to refresh main window reference:', error);
+            }
+            
+            // Set installation flag
+            this.isInstalling = true;
+            
+            // Notify installation started
+            if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+                this.mainWindow.webContents.send('installation-status', {
+                    version, 
+                    status: 'started',
+                    progress: 0
+                });
+            }
+            
+            // Get version manifest
             await this.sendProgress(0, 'Starting Installation', `Preparing to install Minecraft ${version}`);
             
             // Get version manifest
@@ -1017,7 +1068,7 @@ class MinecraftInstaller extends EventEmitter { // Extend EventEmitter
             // Save version JSON
             await this.sendProgress(95, 'Finalizing', 'Saving version data...');
             await fs.writeFile(
-                path.join(versionDir, `${version}.json`),
+                path.join(this.versionsDir, version, `${version}.json`),
                 JSON.stringify(versionData, null, 2)
             );
 
@@ -1033,10 +1084,40 @@ class MinecraftInstaller extends EventEmitter { // Extend EventEmitter
             }
 
             await this.sendProgress(100, 'Complete', `Successfully installed Minecraft ${version}`);
+            
+            // When installation completes
+            this.isInstalling = false;
+            
+            // Reset Discord RPC status
+            discordRPC.setDefaultActivity();
+            
+            // Notify installation complete
+            if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+                this.mainWindow.webContents.send('installation-status', {
+                    version, 
+                    status: 'completed',
+                    progress: 100
+                });
+            }
+            
             return true;
         } catch (error) {
             logger.error(`Installation failed: ${error.message}`);
             await this.sendProgress(100, 'Error', error.message);
+            
+            // Reset status
+            this.isInstalling = false;
+            discordRPC.setDefaultActivity();
+            
+            // Notify installation failed
+            if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+                this.mainWindow.webContents.send('installation-status', {
+                    version, 
+                    status: 'error',
+                    error: error.message
+                });
+            }
+            
             throw error;
         }
     }
@@ -1065,12 +1146,12 @@ class MinecraftInstaller extends EventEmitter { // Extend EventEmitter
         }
     }
 
-    async validateFile(filePath, expectedSha1) {
+    async validateFile(filePath, expectedSha1 = null) {
         try {
             const exists = await fs.pathExists(filePath);
             if (!exists) return false;
             
-            // TODO: Add SHA1 validation
+            // TODO: Add SHA1 validation if expectedSha1 is provided
             return true;
         } catch (err) {
             return false;
