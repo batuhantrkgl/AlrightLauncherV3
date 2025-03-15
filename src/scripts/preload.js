@@ -128,7 +128,10 @@ contextBridge.exposeInMainWorld('minecraft', {
             if (typeof callback === 'function') {
                 ipcRenderer.on('update-download-progress', (_, data) => callback(data));
             }
-        }
+        },
+        // Add simulation controls
+        toggleSimulation: (enable, options) => safeIpcInvoke('toggle-update-simulation', { enable, options }),
+        getSimulationStatus: () => safeIpcInvoke('get-simulation-status')
     },
     soundRepair: {
         repairSounds: (version) => safeIpcInvoke('repair-sound-assets', version)

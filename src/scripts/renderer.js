@@ -13,12 +13,15 @@ if (!window.minecraft?.logger) {
     };
 }
 
-// Initialize variables for toggle switches
+// Initialize variables for toggle switches and DOM elements early to avoid reference errors
 let offlineMode = false;  
 let skipVerification = false;
 let offlineToggle = null;
 let skipVerificationToggle = null;
 let themeSelector = null;
+let settingsModal = null;
+let settingsToggle = null;
+let settingsClose = null;
 
 // Add CSS for version badges (add this near the top of the file)
 const styleElement = document.createElement('style');
@@ -346,10 +349,64 @@ window.minecraft.logger.addLogListener(addLogEntry);
 window.addEventListener('DOMContentLoaded', async () => {
     window.minecraft.logger.info('=== Loading saved settings ===');
     
+    // Initialize DOM element references after the document has loaded
+    settingsModal = document.getElementById('settingsModal');
+    settingsToggle = document.querySelector('.settings-toggle');
+    settingsClose = document.querySelector('.settings-close');
+    
     // Initialize toggle references
     offlineToggle = document.getElementById('offline-toggle');
     skipVerificationToggle = document.getElementById('skip-verification-toggle');
     themeSelector = document.getElementById('theme-selector');
+    
+    // Setup settings modal event listeners once the elements are available
+    if (settingsToggle) {
+        settingsToggle.addEventListener('click', () => {
+            if (settingsModal) {
+                settingsModal.classList.add('active');
+                window.minecraft.logger.info('Settings modal opened');
+            }
+        });
+    }
+    
+    if (settingsClose) {
+        settingsClose.addEventListener('click', () => {
+            if (settingsModal) {
+                settingsModal.classList.remove('active');
+                window.minecraft.logger.info('Settings modal closed');
+            }
+        });
+    }
+    
+    if (settingsModal) {
+        settingsModal.addEventListener('click', (e) => {
+            // If the click is on the modal background, not on the content
+            if (e.target === settingsModal) {
+                settingsModal.classList.remove('active');
+            }
+        });
+    }
+    
+    // Tab switching functionality
+    const settingsTabs = document.querySelectorAll('.settings-tab');
+    const tabContents = document.querySelectorAll('.tab-content');
+    
+    settingsTabs.forEach(tab => {
+        tab.addEventListener('click', () => {
+            const targetTab = tab.getAttribute('data-tab');
+            
+            // Remove active class from all tabs and contents
+            settingsTabs.forEach(t => t.classList.remove('active'));
+            tabContents.forEach(c => c.classList.remove('active'));
+            
+            // Add active class to clicked tab and corresponding content
+            tab.classList.add('active');
+            const targetElement = document.getElementById(targetTab);
+            if (targetElement) {
+                targetElement.classList.add('active');
+            }
+        });
+    });
     
     // Load previously used username
     const savedUsername = localStorage.getItem('lastUsername');
@@ -680,7 +737,7 @@ window.verifyFiles = async (version) => {
         
         // Get file status first
         updateProgress(20, 'Checking file status...');
-        const fileStatus = await window.minecraft.offline.getFileStatus(versionToVerify);
+        // We'll skip getting file status since we're not using the result
         
         updateProgress(50, 'Verifying file integrity...');
         const result = await window.minecraft.offline.verifyFiles(versionToVerify);
@@ -1119,7 +1176,7 @@ window.minecraft.onInstallProgress((data) => {
 
 // Setup update listeners as early as possible
 window.minecraft.updates.onUpdateAvailable((data) => {
-    updateInfo = data;
+    window.updateInfo = data; // Use window to make it globally accessible
     window.minecraft.logger.info(`Update available: ${data.remoteVersion}`);
     showUpdateNotification(data);
 });
@@ -1240,7 +1297,7 @@ window.addEventListener('DOMContentLoaded', () => {
                 }
                 
                 if (result.updateAvailable) {
-                    updateInfo = result;
+                    window.updateInfo = result; // Use window to make it globally accessible
                     showUpdateNotification(result);
                     checkUpdatesBtn.textContent = 'Update Available';
                 } else {
@@ -1324,47 +1381,9 @@ document.getElementById('importMinecraftProfiles').addEventListener('click', asy
 });
 
 // Add settings modal functionality
-const settingsModal = document.getElementById('settingsModal');
-const settingsToggle = document.querySelector('.settings-toggle');
-const settingsClose = document.querySelector('.settings-close');
-
-// Open settings modal when settings toggle is clicked
-settingsToggle.addEventListener('click', () => {
-    settingsModal.classList.add('active');
-    window.minecraft.logger.info('Settings modal opened');
-});
-
-// Close settings modal when close button is clicked
-settingsClose.addEventListener('click', () => {
-    settingsModal.classList.remove('active');
-    window.minecraft.logger.info('Settings modal closed');
-});
-
-// Close settings modal when clicking outside the content
-settingsModal.addEventListener('click', (e) => {
-    // If the click is on the modal background, not on the content
-    if (e.target === settingsModal) {
-        settingsModal.classList.remove('active');
-    }
-});
-
-// Tab switching functionality
-const settingsTabs = document.querySelectorAll('.settings-tab');
-const tabContents = document.querySelectorAll('.tab-content');
-
-settingsTabs.forEach(tab => {
-    tab.addEventListener('click', () => {
-        const targetTab = tab.getAttribute('data-tab');
-        
-        // Remove active class from all tabs and contents
-        settingsTabs.forEach(t => t.classList.remove('active'));
-        tabContents.forEach(c => c.classList.remove('active'));
-        
-        // Add active class to clicked tab and corresponding content
-        tab.classList.add('active');
-        document.getElementById(targetTab).classList.add('active');
-    });
-});
+// Remove these duplicate implementations that appear later in the file
+// if (typeof settingsModal === 'undefined') { ... }
+// const settingsModal = document.getElementById('settingsModal'); ...
 
 window.minecraft.onInstallProgress((data) => {
     updateProgress(
@@ -1375,7 +1394,10 @@ window.minecraft.onInstallProgress((data) => {
 });
 
 // Update System
-let updateInfo = null;
+// Only initialize updateInfo if it's not already defined
+if (typeof updateInfo === 'undefined') {
+    let updateInfo = null;
+}
 
 // Setup update listeners as early as possible
 window.minecraft.updates.onUpdateAvailable((data) => {
@@ -1582,5 +1604,193 @@ document.getElementById('importMinecraftProfiles').addEventListener('click', asy
         showError(`Profile import error: ${error.message}`);
     }
 });
+
+// Add a simulation control panel to the settings page in the renderer.js file:
+
+// ...existing code...
+
+// Function to set up simulation UI
+async function setupSimulationUI() {
+    // Get the advanced settings tab content
+    const advancedTab = document.getElementById('advanced-settings');
+    if (!advancedTab) return;
+    
+    // Create simulation section
+    const simulationSection = document.createElement('div');
+    simulationSection.className = 'settings-section';
+    simulationSection.innerHTML = `
+        <h3>Update Simulation (Debug)</h3>
+        <div class="setting-item">
+            <label>Enable Update Simulation</label>
+            <label class="theme-switch">
+                <input type="checkbox" id="simulation-toggle">
+                <span class="slider"></span>
+            </label>
+            <div class="simulation-status" style="color: #888; margin-top: 5px;">Simulation inactive</div>
+            <p class="setting-description">
+                This will simulate an update process when you check for updates
+            </p>
+        </div>
+        <div class="setting-item">
+            <label>Make Download Fail</label>
+            <label class="theme-switch">
+                <input type="checkbox" id="simulation-fail-download">
+                <span class="slider"></span>
+            </label>
+        </div>
+        <div class="setting-item">
+            <label>Make Installation Fail</label>
+            <label class="theme-switch">
+                <input type="checkbox" id="simulation-fail-install">
+                <span class="slider"></span>
+            </label>
+        </div>
+        <div class="setting-item">
+            <p class="setting-description" style="margin-top: 15px;">
+                <strong>How to use:</strong><br>
+                1. Enable simulation using the toggle above<br>
+                2. Select failure points if desired<br>
+                3. Go to Game Settings and click "Check for Updates"<br>
+                4. The launcher will simulate an update and/or failure
+            </p>
+        </div>
+    `;
+    
+    // Add to Advanced settings tab
+    advancedTab.appendChild(simulationSection);
+    
+    // Get simulation status
+    const simulationStatus = await window.minecraft.updates.getSimulationStatus();
+    
+    // Set up event handlers
+    const simulationToggle = document.getElementById('simulation-toggle');
+    const statusIndicator = document.querySelector('.simulation-status');
+    const failDownloadToggle = document.getElementById('simulation-fail-download');
+    const failInstallToggle = document.getElementById('simulation-fail-install');
+    
+    // Update status indicator
+    function updateStatusIndicator(enabled) {
+        if (enabled) {
+            statusIndicator.textContent = 'Simulation ACTIVE';
+            statusIndicator.style.color = '#00aa00';
+            statusIndicator.style.fontWeight = 'bold';
+        } else {
+            statusIndicator.textContent = 'Simulation inactive';
+            statusIndicator.style.color = '#888';
+            statusIndicator.style.fontWeight = 'normal';
+        }
+    }
+    
+    // Initialize UI based on current status
+    if (simulationStatus.enabled) {
+        simulationToggle.checked = true;
+        updateStatusIndicator(true);
+        
+        // Fill in current values
+        if (simulationStatus.config) {
+            failDownloadToggle.checked = simulationStatus.config.failDownload || false;
+            failInstallToggle.checked = simulationStatus.config.failInstall || false;
+        }
+    }
+    
+    // Main simulation toggle
+    simulationToggle.addEventListener('change', async (e) => {
+        try {
+            const options = {
+                failDownload: failDownloadToggle.checked,
+                failInstall: failInstallToggle.checked
+            };
+            
+            const result = await window.minecraft.updates.toggleSimulation(e.target.checked, options);
+            
+            if (result.enabled) {
+                window.minecraft.logger.info('Update simulation enabled');
+                updateStatusIndicator(true);
+                
+                const message = options.failDownload ? 
+                    'Update simulation will fail during download' : 
+                    options.failInstall ? 
+                        'Update simulation will fail during installation' : 
+                        'Update simulation enabled (simulates an update with no failures)';
+                
+                window.alert(`Simulation ENABLED!\n\n${message}\n\nGo to Game Settings tab and click "Check for Updates" to test.`);
+            } else {
+                window.minecraft.logger.info('Update simulation disabled');
+                updateStatusIndicator(false);
+            }
+        } catch (error) {
+            window.minecraft.logger.error(`Failed to toggle simulation: ${error.message}`);
+            e.target.checked = !e.target.checked; // Revert toggle state on error
+            window.alert(`Simulation toggle failed: ${error.message}`);
+        }
+    });
+    
+    // Failure option toggles
+    failDownloadToggle.addEventListener('change', async (e) => {
+        if (simulationToggle.checked) {
+            try {
+                const options = {
+                    failDownload: e.target.checked,
+                    failInstall: failInstallToggle.checked
+                };
+                
+                await window.minecraft.updates.toggleSimulation(true, options);
+                window.minecraft.logger.info(`Download failure simulation ${e.target.checked ? 'enabled' : 'disabled'}`);
+            } catch (error) {
+                window.minecraft.logger.error(`Failed to update simulation: ${error.message}`);
+                e.target.checked = !e.target.checked; // Revert toggle state on error
+            }
+        }
+    });
+    
+    failInstallToggle.addEventListener('change', async (e) => {
+        if (simulationToggle.checked) {
+            try {
+                const options = {
+                    failDownload: failDownloadToggle.checked,
+                    failInstall: e.target.checked
+                };
+                
+                await window.minecraft.updates.toggleSimulation(true, options);
+                window.minecraft.logger.info(`Install failure simulation ${e.target.checked ? 'enabled' : 'disabled'}`);
+            } catch (error) {
+                window.minecraft.logger.error(`Failed to update simulation: ${error.message}`);
+                e.target.checked = !e.target.checked; // Revert toggle state on error
+            }
+        }
+    });
+}
+
+// Define helper function for notification (missing implementation)
+function showNotification(message) {
+    window.minecraft.logger.info(message);
+    // Could be implemented with a toast/notification UI
+    // For now, just log it
+    alert(message);
+}
+
+function showError(message) {
+    window.minecraft.logger.error(message);
+    alert(`Error: ${message}`);
+}
+
+function hideProgress() {
+    showProgress(false);
+}
+
+// Helper function for loading profiles (referenced but not implemented)
+async function loadProfiles() {
+    try {
+        if (window.minecraft.profiles && window.minecraft.profiles.getProfiles) {
+            const profiles = await window.minecraft.profiles.getProfiles();
+            window.minecraft.logger.info(`Loaded ${profiles.length} profiles`);
+            // Implement UI update for profiles if needed
+        }
+    } catch (error) {
+        window.minecraft.logger.error(`Failed to load profiles: ${error.message}`);
+    }
+}
+
+// ...existing code...
 
 

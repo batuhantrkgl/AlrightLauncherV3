@@ -814,6 +814,34 @@ function registerIpcHandlers() {
             return { success: false, error: error.message };
         }
     });
+
+    // Add simulation mode handlers
+    ipcMain.handle('toggle-update-simulation', async (event, { enable, options = {} }) => {
+        try {
+            if (!updateService) {
+                updateService = new UpdateService();
+            }
+            return await updateService.toggleSimulationMode(enable, options);
+        } catch (error) {
+            logger.error('Error toggling simulation mode:', error);
+            return { success: false, error: error.message };
+        }
+    });
+    
+    ipcMain.handle('get-simulation-status', async () => {
+        try {
+            if (!updateService) {
+                updateService = new UpdateService();
+            }
+            return {
+                enabled: updateService.updateSimulation.isEnabled(),
+                config: updateService.updateSimulation.getConfig()
+            };
+        } catch (error) {
+            logger.error('Error getting simulation status:', error);
+            return { enabled: false, error: error.message };
+        }
+    });
 }
 
 // Modify the isDevelopmentMode function to ONLY check for --dev flag
