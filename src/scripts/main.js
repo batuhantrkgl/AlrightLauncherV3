@@ -898,6 +898,30 @@ function registerIpcHandlers() {
             return { enabled: false, error: error.message };
         }
     });
+
+    // Add the system info handler in the registerIpcHandlers function
+    ipcMain.handle('get-system-info', async () => {
+        try {
+            const os = require('os');
+            const totalMemoryBytes = os.totalmem();
+            const totalMemoryMB = Math.floor(totalMemoryBytes / (1024 * 1024));
+            
+            return {
+                totalMemoryMB,
+                freeMemoryMB: Math.floor(os.freemem() / (1024 * 1024)),
+                cpus: os.cpus().length,
+                platform: os.platform()
+            };
+        } catch (error) {
+            console.error('Error getting system info:', error);
+            return {
+                totalMemoryMB: 8192, // Default to 8GB if error
+                freeMemoryMB: 4096,
+                cpus: 4,
+                platform: process.platform
+            };
+        }
+    });
 }
 
 // Modify the isDevelopmentMode function to ONLY check for --dev flag

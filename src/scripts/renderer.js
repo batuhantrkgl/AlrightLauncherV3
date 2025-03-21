@@ -439,6 +439,9 @@ window.addEventListener('DOMContentLoaded', async () => {
     skipVerificationToggle = document.getElementById('skip-verification-toggle');
     themeSelector = document.getElementById('theme-selector');
     
+    // Initialize RAM settings
+    await initializeRamSettings();
+    
     // Setup settings modal event listeners once the elements are available
     if (settingsToggle) {
         settingsToggle.addEventListener('click', () => {
@@ -686,12 +689,15 @@ async function playGame() {
     
     const username = document.getElementById('username').textContent;
     
+    // Get RAM allocation from localStorage
+    const maxRam = parseInt(localStorage.getItem('maxRam')) || 2048;
+    
     // Save both values when launching the game
     localStorage.setItem('lastUsername', username);
     localStorage.setItem('lastVersion', version);
     
     // Log the exact version being launched
-    window.minecraft.logger.info(`Launching version: ${version}`);
+    window.minecraft.logger.info(`Launching version: ${version} with ${maxRam}MB RAM`);
     
     try {
         // Disable all UI elements
@@ -730,7 +736,11 @@ async function playGame() {
         }
         
         updateProgress(60, 'Launching game...');
-        const launched = await window.minecraft.launchGame(version, username, { offline: offlineMode });
+        // Pass the RAM allocation to the launch options
+        const launched = await window.minecraft.launchGame(version, username, { 
+            offline: offlineMode,
+            maxRam: maxRam
+        });
         
         if (launched.success) {
             updateProgress(100, 'Game launched successfully!');
@@ -2173,6 +2183,179 @@ window.addEventListener('DOMContentLoaded', async () => {
     
     // Create the progress UI elements if they don't exist yet
     ensureProgressElements();
+});
+
+// ...existing code...
+
+// Add functions to handle RAM settings
+async function initializeRamSettings() {
+    try {
+        // Get system memory from the main process
+        const systemInfo = await window.minecraft.ipc.invoke('get-system-info');
+        const totalRamMB = Math.floor(systemInfo.totalMemoryMB);
+        
+        // Set reasonable limits for RAM slider
+        const minRam = 1024; // Minimum 1GB
+        const maxRam = Math.min(totalRamMB - 1024, 16384); // Max RAM - 1GB for system, cap at 16GB
+        
+        // Calculate default RAM (half of system RAM)
+        let defaultRam = Math.floor(totalRamMB / 2);
+        // Make sure default is within bounds and divisible by 512
+        defaultRam = Math.min(maxRam, Math.max(minRam, Math.floor(defaultRam / 512) * 512));
+        
+        // Get saved RAM setting or use default
+        const savedRam = parseInt(localStorage.getItem('maxRam')) || defaultRam;
+        
+        // Get RAM slider element
+        const ramSlider = document.getElementById('ram-slider');
+        const ramValue = document.getElementById('ram-value');
+        
+        // Update slider attributes
+        ramSlider.min = minRam;
+        ramSlider.max = maxRam;
+        ramSlider.step = 512;
+        ramSlider.value = savedRam;
+        
+        // Update display value
+        ramValue.textContent = savedRam;
+        
+        // Add event listener for slider change
+        ramSlider.addEventListener('input', function() {
+            ramValue.textContent = this.value;
+        });
+        
+        // Save value when slider is released
+        ramSlider.addEventListener('change', function() {
+            const ramAmount = parseInt(this.value);
+            localStorage.setItem('maxRam', ramAmount);
+            window.minecraft.logger.info(`RAM allocation set to ${ramAmount}MB`);
+        });
+        
+        window.minecraft.logger.info(`RAM slider initialized: ${savedRam}MB (System total: ${totalRamMB}MB)`);
+    } catch (error) {
+        window.minecraft.logger.error(`Failed to initialize RAM settings: ${error.message}`);
+        // Fallback to reasonable defaults
+        const ramSlider = document.getElementById('ram-slider');
+        ramSlider.value = 2048;
+        document.getElementById('ram-value').textContent = 2048;
+    }
+}
+
+// Update the playGame function to use the selected RAM value
+async function playGame() {
+    if (isOperationInProgress || gameRunning || launchInProgress) return;
+    
+    launchInProgress = true;
+    
+    // Get the version from data-version attribute first, then fallback to text content
+    let version = versionElement.getAttribute('data-version') || versionElement.textContent;
+    
+    // Extra safety check: Remove duplicated "Fabric" prefix if present
+    if (version.startsWith('Fabricfabric-')) {
+        version = version.replace('Fabricfabric-', 'fabric-');
+        window.minecraft.logger.info(`Fixed duplicated prefix in version: ${version}`);
+    }
+    
+    const username = document.getElementById('username').textContent;
+    
+    // Get RAM allocation from localStorage
+    const maxRam = parseInt(localStorage.getItem('maxRam')) || 2048;
+    
+    // Save both values when launching the game
+    localStorage.setItem('lastUsername', username);
+    localStorage.setItem('lastVersion', version);
+    
+    // Log the exact version being launched
+    window.minecraft.logger.info(`Launching version: ${version} with ${maxRam}MB RAM`);
+    
+    try {
+        // Disable all UI elements
+        disableAllControls(true);
+        showProgress(true);
+        updateProgress(0, 'Preparing to launch...');
+        
+        // If in offline mode, verify files unless skipped
+        if (offlineMode && !skipVerification) {
+            updateProgress(10, 'Verifying game files...');
+            
+            try {
+                const verificationResult = await window.minecraft.offline.verifyFiles(version);
+                
+                if (!verificationResult.success) {
+                    const missingFiles = verificationResult.missing || [];
+                    const corruptedFiles = verificationResult.corrupted || [];
+                    
+                    if (missingFiles.length > 0 || corruptedFiles.length > 0) {
+                        throw new Error(
+                            `File verification failed. Missing: ${missingFiles.length}, Corrupted: ${corruptedFiles.length}`
+                        );
+                    }
+                }
+                window.minecraft.logger.info('File verification passed');
+            } catch (verifyError) {
+                throw new Error(`File verification error: ${verifyError.message}`);
+            }
+        }
+        
+        updateProgress(40, 'Checking Java installation...');
+        const javaVersion = await window.minecraft.checkJava();
+        
+        if (!javaVersion.installed) {
+            throw new Error('Java is not properly installed');
+        }
+        
+        updateProgress(60, 'Launching game...');
+        // Pass the RAM allocation to the launch options
+        const launched = await window.minecraft.launchGame(version, username, { 
+            offline: offlineMode,
+            maxRam: maxRam
+        });
+        
+        if (launched.success) {
+            updateProgress(100, 'Game launched successfully!');
+            gameRunning = true;
+            
+            // Hide progress overlay
+            setTimeout(() => {
+                showProgress(false);
+                // Hide the launcher after a short delay
+                setTimeout(() => {
+                    window.minecraft.ipc.invoke('hide-window');
+                    window.minecraft.logger.info('Launcher hidden while game is running');
+                }, 2000); // 2-second delay before hiding
+            }, 1000);
+        } else {
+            throw new Error(launched.error || 'Failed to launch game');
+        }
+    } catch (error) {
+        updateProgress(100, 'Error', error.message);
+        setTimeout(() => {
+            showProgress(false);
+            disableAllControls(false); // Re-enable controls
+        }, 2000);
+    } finally {
+        launchInProgress = false;
+    }
+}
+
+// Update the window.addEventListener('DOMContentLoaded'...) function to initialize RAM settings
+window.addEventListener('DOMContentLoaded', async () => {
+    window.minecraft.logger.info('=== Loading saved settings ===');
+    
+    // Initialize DOM element references after the document has loaded
+    settingsModal = document.getElementById('settingsModal');
+    settingsToggle = document.querySelector('.settings-toggle');
+    settingsClose = document.querySelector('.settings-close');
+    
+    // Initialize toggle references
+    offlineToggle = document.getElementById('offline-toggle');
+    skipVerificationToggle = document.getElementById('skip-verification-toggle');
+    themeSelector = document.getElementById('theme-selector');
+    
+    // Initialize RAM settings
+    await initializeRamSettings();
+    
+    // ...existing code...
 });
 
 // ...existing code...

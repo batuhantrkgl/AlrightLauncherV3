@@ -97,7 +97,8 @@ contextBridge.exposeInMainWorld('minecraft', {
                 'verify-game-files',
                 'get-installed-versions',
                 'hide-window',      // Add this channel
-                'show-window'       // Add this channel
+                'show-window',      // Add this channel
+                'get-system-info'   // Add this channel to the list
             ];
             if (validChannels.includes(channel)) {
                 return safeIpcInvoke(channel, ...args);
