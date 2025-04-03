@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; script-src 'self'; connect-src 'self' https://piston-meta.mojang.com https://launchermeta.mojang.com https://resources.download.minecraft.net https://libraries.minecraft.net;">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://login.microsoftonline.com https://secure.aadcdn.microsoftonline-p.com; connect-src 'self' https://piston-meta.mojang.com https://launchermeta.mojang.com https://resources.download.minecraft.net https://libraries.minecraft.net;">
     <title>AlrightLauncher</title>
     <link rel="stylesheet" href="../styles/styles.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700&family=Poppins:wght@400;600;700&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
@@ -103,7 +103,10 @@
             <h3>Version 3.0.5 (Beta)</h3>
         </div>
         <!-- <h3>Standalone.</h3> -->
-        <h3 id="username" contenteditable="true" spellcheck="false">Player</h3>
+        <div class="username-container">
+            <input type="text" id="username-input" value="Player" spellcheck="false">
+            <!-- Microsoft login button will be added by JavaScript -->
+        </div>
     </div>
 
     <div class="right-panel">

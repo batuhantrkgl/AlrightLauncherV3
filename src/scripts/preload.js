@@ -85,7 +85,7 @@ contextBridge.exposeInMainWorld('minecraft', {
         getProfile: () => safeIpcInvoke('get-profile'),
         onProfileUpdate: (callback) => {
             if (typeof callback === 'function') {
-                ipcRenderer.on('profile-update', (_, profile) => callback(profile));
+                ipcRenderer.on('profile-updated', (_, profile) => callback(profile));
             }
         }
     },

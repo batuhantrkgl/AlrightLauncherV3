@@ -1642,3 +1642,58 @@ body, .left-panel, .right-panel, .play-button, .version-dropdown,
     transform: translateY(-2px);
     box-shadow: 0 6px 20px rgba(0,0,0,0.15);
 }
+
+/* Username Input and Microsoft Login Button Styles */
+.username-container {
+    margin-top: auto;
+    margin-bottom: 0;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+#username-input {
+    font-family: 'Poppins', sans-serif;
+    font-size: 0.9rem;
+    line-height: 1;
+    text-shadow: 4px 4px 8px rgba(0, 0, 0, 0.2);
+    padding: 0.8rem 1.2rem;
+    border-radius: 8px;
+    opacity: 0.9;
+    outline: none;
+    transition: all var(--transition-speed);
+    background: transparent;
+    border: none;
+    color: var(--text-color);
+    width: 100%;
+    max-width: 200px;
+}
+
+#username-input:hover {
+    opacity: 1;
+    background: rgba(255, 255, 255, 0.1);
+    backdrop-filter: blur(60px);
+    box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+}
+
+#username-input:focus {
+    background: rgba(255, 255, 255, 0.15);
+    backdrop-filter: blur(5px);
+    box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+}
+
+#username-input.username-locked {
+    background-color: rgba(240, 240, 240, 0.1);
+    color: var(--text-color);
+    cursor: not-allowed;
+}
+
+.ms-login-btn:hover {
+    background-color: #0E6B0E;
+}
+
+.ms-login-btn:disabled {
+    background-color: #3a8c3a;
+    cursor: wait;
+}

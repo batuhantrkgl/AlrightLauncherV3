@@ -11,6 +11,7 @@ const FileManager = require('./fileManager');
 const UpdateService = require('./update-service');
 const logger = require('./logger');
 const discordRPC = require('./discord-rpc');
+const AuthService = require('./auth-service');
 
 // Add this helper function at the top level
 function resolveAppPath(relativePath) {
@@ -74,6 +75,7 @@ let serverManager = null;
 let mockAuthServer = null;
 let fileManager = null;
 let updateService = null;
+let authService = null;
 
 function registerIpcHandlers() {
     // Clear existing handlers first
@@ -920,6 +922,64 @@ function registerIpcHandlers() {
                 cpus: 4,
                 platform: process.platform
             };
+        }
+    });
+
+    // Add authentication handlers
+    ipcMain.handle('authenticate', async () => {
+        try {
+            if (!authService) {
+                authService = new AuthService();
+            }
+            
+            const profile = await authService.login();
+            
+            // Send profile update to all windows
+            BrowserWindow.getAllWindows().forEach(win => {
+                if (!win.isDestroyed()) {
+                    win.webContents.send('profile-updated', profile);
+                }
+            });
+            
+            return profile;
+        } catch (error) {
+            logger.error('Authentication failed:', error);
+            return { error: error.message };
+        }
+    });
+    
+    ipcMain.handle('logout', async () => {
+        try {
+            if (!authService) {
+                authService = new AuthService();
+            }
+            
+            const result = await authService.logout();
+            
+            // Send profile update to all windows
+            BrowserWindow.getAllWindows().forEach(win => {
+                if (!win.isDestroyed()) {
+                    win.webContents.send('profile-updated', null);
+                }
+            });
+            
+            return result;
+        } catch (error) {
+            logger.error('Logout failed:', error);
+            return false;
+        }
+    });
+    
+    ipcMain.handle('get-profile', async () => {
+        try {
+            if (!authService) {
+                authService = new AuthService();
+            }
+            
+            return authService.getProfile();
+        } catch (error) {
+            logger.error('Get profile failed:', error);
+            return null;
         }
     });
 }

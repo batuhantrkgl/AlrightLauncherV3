@@ -125,36 +125,22 @@ function showProgress(show = true) {
 
 const versionElement = document.getElementById('version');
 const dropdown = document.getElementById('version-dropdown');
-const username = document.getElementById('username');
-let originalText = username.textContent;
+// Changed this line to use username-input instead of username
+const usernameInput = document.getElementById('username-input');
+let originalText = usernameInput ? usernameInput.value : 'Player';
 
-// Username handling
-username.addEventListener('focus', function() {
-    this.classList.add('editing');
-    const selection = window.getSelection();
-    const range = document.createRange();
-    range.setStart(this.childNodes[0], 1);
-    range.setEnd(this.childNodes[0], this.textContent.length);
-    selection.removeAllRanges();
-    selection.addRange(range);
-});
+// Update any event listeners for the username
+if (usernameInput) {
+    usernameInput.addEventListener('focus', function() {
+        this.classList.add('editing');
+    });
 
-// Username handling - update to save on blur
-username.addEventListener('blur', function() {
-    this.classList.remove('editing');
-    // Save username to localStorage when user finishes editing
-    localStorage.setItem('lastUsername', this.textContent);
-});
-
-username.addEventListener('focus', function() {
-    this.classList.add('editing');
-    const selection = window.getSelection();
-    const range = document.createRange();
-    range.setStart(this.childNodes[0], 1);
-    range.setEnd(this.childNodes[0], this.textContent.length);
-    selection.removeAllRanges();
-    selection.addRange(range);
-});
+    usernameInput.addEventListener('blur', function() {
+        this.classList.remove('editing');
+        // Save username to localStorage when user finishes editing
+        localStorage.setItem('lastUsername', this.value);
+    });
+}
 
 async function fetchVersions() {
     try {
@@ -315,7 +301,7 @@ versionElement.addEventListener('click', async (event) => {
         // Determine if this is a modded version
         const isFabric = v.id.includes('fabric') || v.type === 'fabric';
         const isForge = v.id.includes('forge') || v.type === 'forge';
-        const isQuilt = v.id.includes('quilt') || v.type === 'quilt';
+        const isQuilt = v.id.includes('quilt');
         
         // Add CSS class based on modloader type
         const typeClass = isFabric ? 'fabric-version' : 
@@ -493,8 +479,8 @@ window.addEventListener('DOMContentLoaded', async () => {
     
     // Load previously used username
     const savedUsername = localStorage.getItem('lastUsername');
-    if (savedUsername) {
-        document.getElementById('username').textContent = savedUsername;
+    if (savedUsername && usernameInput) {
+        usernameInput.value = savedUsername;
         window.minecraft.logger.info(`Loaded saved username: ${savedUsername}`);
     }
     
@@ -687,7 +673,8 @@ async function playGame() {
         window.minecraft.logger.info(`Fixed duplicated prefix in version: ${version}`);
     }
     
-    const username = document.getElementById('username').textContent;
+    // Get username from input value instead of textContent
+    const username = usernameInput ? usernameInput.value : 'Player';
     
     // Get RAM allocation from localStorage
     const maxRam = parseInt(localStorage.getItem('maxRam')) || 2048;
@@ -773,18 +760,24 @@ async function playGame() {
 function disableAllControls(disable = true) {
     // Disable version dropdown
     const versionElement = document.getElementById('version');
-    versionElement.style.pointerEvents = disable ? 'none' : 'auto';
-    versionElement.style.opacity = disable ? '0.7' : '1';
+    if (versionElement) {
+        versionElement.style.pointerEvents = disable ? 'none' : 'auto';
+        versionElement.style.opacity = disable ? '0.7' : '1';
+    }
     
-    // Disable username editing
-    const username = document.getElementById('username');
-    username.contentEditable = disable ? 'false' : 'true';
-    username.style.opacity = disable ? '0.7' : '1';
+    // Disable username editing - updated to use username-input instead of username
+    const usernameInput = document.getElementById('username-input');
+    if (usernameInput) {
+        usernameInput.disabled = disable;
+        usernameInput.style.opacity = disable ? '0.7' : '1';
+    }
     
     // Disable play button
     const playButton = document.querySelector('.play-button');
-    playButton.disabled = disable;
-    playButton.textContent = disable ? (gameRunning ? 'Game Running' : 'Launching...') : 'Play';
+    if (playButton) {
+        playButton.disabled = disable;
+        playButton.textContent = disable ? (gameRunning ? 'Game Running' : 'Launching...') : 'Play';
+    }
     
     // Disable settings/debug toggles
     const debugToggle = document.querySelector('.debug-toggle');
@@ -2256,7 +2249,8 @@ async function playGame() {
         window.minecraft.logger.info(`Fixed duplicated prefix in version: ${version}`);
     }
     
-    const username = document.getElementById('username').textContent;
+    // Get username from input value instead of textContent
+    const username = usernameInput ? usernameInput.value : 'Player';
     
     // Get RAM allocation from localStorage
     const maxRam = parseInt(localStorage.getItem('maxRam')) || 2048;
@@ -2358,6 +2352,180 @@ window.addEventListener('DOMContentLoaded', async () => {
     // ...existing code...
 });
 
+// ...existing code...
+
+// Add a variable to track authentication state
+let isAuthenticated = false;
+let loginButton = null;
+
+// Function to initialize authentication UI
+async function initializeAuth() {
+    const usernameInput = document.getElementById('username-input');
+    
+    if (!usernameInput) {
+        console.warn('Username input not found. Authentication UI cannot be initialized.');
+        return;
+    }
+    
+    // Create and add login button
+    loginButton = document.createElement('button');
+    loginButton.id = 'ms-login-button';
+    loginButton.textContent = 'Login with Microsoft';
+    loginButton.className = 'ms-login-btn';
+    
+    // Add button next to username input
+    usernameInput.parentNode.insertBefore(loginButton, usernameInput.nextSibling);
+    
+    // Add Microsoft login button styles
+    const styleElement = document.createElement('style');
+    styleElement.textContent = `
+        .ms-login-btn {
+            font-family: 'Poppins', sans-serif;
+            line-height: 1;
+            text-shadow: 4px 4px 8px rgba(0, 0, 0, 0.2);
+            padding: 0.8rem 1.2rem;
+            border-radius: 8px;
+            opacity: 0.9;
+            outline: none;
+            transition: all var(--transition-speed);
+            border: none;
+            background: var(--primary-color);
+            color: var(--text-color);
+            width: 100%;
+            max-width: 200px;
+        }
+        .ms-login-btn:hover {
+            background-color: #0E6B0E;
+        }
+        .username-locked {
+            background-color: #f0f0f0;
+            color: #333;
+            cursor: not-allowed;
+        }
+    `;
+    document.head.appendChild(styleElement);
+    
+    // Add login button click handler
+    loginButton.addEventListener('click', async () => {
+        try {
+            loginButton.disabled = true;
+            loginButton.textContent = 'Logging in...';
+            
+            const profile = await window.minecraft.auth.login();
+            
+            if (profile && !profile.error) {
+                updateUIForLoggedInUser(profile);
+            } else {
+                const errorMsg = profile?.error || 'Authentication failed';
+                window.minecraft.logger.error(`Login failed: ${errorMsg}`);
+                alert(`Login failed: ${errorMsg}`);
+                
+                loginButton.disabled = false;
+                loginButton.textContent = 'Login with Microsoft';
+            }
+        } catch (error) {
+            window.minecraft.logger.error('Login error:', error);
+            alert(`Login error: ${error.message}`);
+            
+            loginButton.disabled = false;
+            loginButton.textContent = 'Login with Microsoft';
+        }
+    });
+    
+    // Add Ctrl+click handler for username (to logout)
+    usernameInput.addEventListener('click', async (event) => {
+        if (isAuthenticated && event.ctrlKey) {
+            const confirmLogout = confirm('Do you want to log out from your Microsoft account?');
+            if (confirmLogout) {
+                await logout();
+            }
+        }
+    });
+    
+    // Listen for profile updates from main process
+    window.minecraft.auth.onProfileUpdate((profile) => {
+        if (profile) {
+            updateUIForLoggedInUser(profile);
+        } else {
+            updateUIForLoggedOutUser();
+        }
+    });
+    
+    // Check if user is already authenticated
+    try {
+        const profile = await window.minecraft.auth.getProfile();
+        if (profile) {
+            updateUIForLoggedInUser(profile);
+        }
+    } catch (error) {
+        window.minecraft.logger.error('Error checking auth state:', error);
+    }
+}
+
+// Update UI when user is logged in
+function updateUIForLoggedInUser(profile) {
+    const usernameInput = document.getElementById('username-input');
+    if (!usernameInput || !loginButton) return;
+    
+    isAuthenticated = true;
+    
+    // Update username input with Minecraft username
+    usernameInput.value = profile.name;
+    usernameInput.disabled = true;
+    usernameInput.classList.add('username-locked');
+    usernameInput.title = 'Logged in with Microsoft account (Ctrl+click to logout)';
+    
+    // Hide login button
+    loginButton.style.display = 'none';
+    
+    window.minecraft.logger.info(`Logged in as ${profile.name}`);
+}
+
+// Update UI when user is logged out
+function updateUIForLoggedOutUser() {
+    const usernameInput = document.getElementById('username-input');
+    if (!usernameInput || !loginButton) return;
+    
+    isAuthenticated = false;
+    
+    // Reset username input
+    usernameInput.disabled = false;
+    usernameInput.classList.remove('username-locked');
+    usernameInput.title = '';
+    
+    // Show login button
+    loginButton.style.display = 'inline-block';
+    loginButton.disabled = false;
+    loginButton.textContent = 'Login with Microsoft';
+    
+    window.minecraft.logger.info('Logged out from Microsoft account');
+}
+
+// Function to handle logout
+async function logout() {
+    try {
+        const success = await window.minecraft.auth.logout();
+        if (success) {
+            updateUIForLoggedOutUser();
+        } else {
+            window.minecraft.logger.error('Logout failed');
+            alert('Logout failed. Please try again.');
+        }
+    } catch (error) {
+        window.minecraft.logger.error('Logout error:', error);
+        alert(`Logout error: ${error.message}`);
+    }
+}
+
+// Add initialization to document ready
+document.addEventListener('DOMContentLoaded', () => {
+    // ...existing code...
+    
+    // Initialize authentication UI
+    initializeAuth();
+    
+    // ...existing code...
+});
 // ...existing code...
 
 
