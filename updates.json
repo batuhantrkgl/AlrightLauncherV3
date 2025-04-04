@@ -1,10 +1,10 @@
 {
   "stable": {
-    "version": "3.0.4",
-    "releaseDate": "2023-06-15",
-    "downloadUrl": "https://github.com/batuhantrkgl/AlrightLauncher/releases/download/v3.0.4/AlrightLauncher-Setup-3.0.4.exe",
+    "version": "3.1.2",
+    "releaseDate": "2025-04-04",
+    "downloadUrl": "https://github.com/batuhantrkgl/AlrightLauncherV3/releases/download/v3.1.2/AlrightLauncher-Setup-3.1.2.exe",
     "sha256": "replace_with_actual_file_hash",
-    "releaseNotes": "- Initial stable release\n- Full offline mode support\n- Fixed server creation issues\n- Improved launcher stability"
+    "releaseNotes": "- Initial stable release\n- Full offline mode support\n- Fixed server creation issues\n- Improved launcher stability\n Microsoft Authentication Support etc."
   },
   "beta": {
     "version": "3.0.5-beta.fd9a017",

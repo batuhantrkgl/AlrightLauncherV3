@@ -12,6 +12,8 @@ const UpdateService = require('./update-service');
 const logger = require('./logger');
 const discordRPC = require('./discord-rpc');
 const AuthService = require('./auth-service');
+// Import the auth integration module
+const { initAuthIntegration } = require('./auth-integration');
 
 // Add this helper function at the top level
 function resolveAppPath(relativePath) {
@@ -76,6 +78,7 @@ let mockAuthServer = null;
 let fileManager = null;
 let updateService = null;
 let authService = null;
+let authCleanup = null; // Add variable to store auth cleanup function
 
 function registerIpcHandlers() {
     // Clear existing handlers first
@@ -226,27 +229,27 @@ function registerIpcHandlers() {
         }
     });
 
-    ipcMain.handle('launch-game', async (event, { version, username }) => {
+    ipcMain.handle('launch-game', async (event, options) => {
         try {
-            logger.info(`Launch request received for Minecraft ${version} with username ${username}`);
+            logger.info(`Launch request received for Minecraft ${options.version} with username ${options.username}`);
             
             // First ensure a profile exists for this version
             const ProfileCreator = require('./profile-creator');
             const profileCreator = new ProfileCreator(global.minecraftPath);
             
-            logger.info(`Ensuring profile exists for version ${version}`);
-            const profileResult = await profileCreator.ensureProfileExists(version);
+            logger.info(`Ensuring profile exists for version ${options.version}`);
+            const profileResult = await profileCreator.ensureProfileExists(options.version);
             
             if (!profileResult.success) {
-                logger.warn(`Could not ensure profile for ${version}: ${profileResult.error}`);
+                logger.warn(`Could not ensure profile for ${options.version}: ${profileResult.error}`);
                 // Continue anyway as this is not critical
             } else if (profileResult.created) {
-                logger.info(`Created new profile for ${version}: ${profileResult.id}`);
+                logger.info(`Created new profile for ${options.version}: ${profileResult.id}`);
             }
             
             // Set a timeout for the launch process
             const launchTimeout = setTimeout(() => {
-                logger.error(`Launch timed out for Minecraft ${version}`);
+                logger.error(`Launch timed out for Minecraft ${options.version}`);
                 throw new Error('Launch operation timed out after 60 seconds');
             }, 60000); // 60 second timeout
             
@@ -256,8 +259,30 @@ function registerIpcHandlers() {
                 logger.info(`Created new MinecraftLauncher instance with baseDir: ${baseDir}`);
             }
 
-            logger.info(`Calling minecraftLauncher.launch for ${version}...`);
-            const result = await minecraftLauncher.launch(version, username);
+            // Determine if we should use online mode
+            const useOnlineMode = !options.offline;
+            
+            // If online mode is requested, get auth data
+            let authData = null;
+            if (useOnlineMode) {
+                try {
+                    authData = await authService.getGameAuthData();
+                    if (authData) {
+                        logger.info(`Using Microsoft authentication for ${authData.profile.name}`);
+                    } else {
+                        logger.warn('Failed to get auth data, falling back to offline mode');
+                    }
+                } catch (error) {
+                    logger.error(`Error getting auth data: ${error.message}`);
+                }
+            }
+
+            logger.info(`Calling minecraftLauncher.launch for ${options.version}...`);
+            const result = await minecraftLauncher.launch(options.version, options.username, {
+                ...options,
+                authData,
+                offline: !authData // Set offline mode based on whether we have auth data
+            });
             
             // Clear the timeout since we got a response
             clearTimeout(launchTimeout);
@@ -276,7 +301,7 @@ function registerIpcHandlers() {
             
             // Update Discord RPC when game launches
             if (result.success) {
-                discordRPC.setPlayingActivity(version);
+                discordRPC.setPlayingActivity(options.version);
             }
             
             // Monitor for crashes
@@ -1055,6 +1080,12 @@ async function createWindow() {
     // Initialize minecraft launcher with custom path
     const baseDir = global.minecraftPath;
     minecraftLauncher = new MinecraftLauncher(baseDir);
+    
+    // Initialize authentication service
+    authService = new AuthService();
+    
+    // Initialize auth integration
+    authCleanup = initAuthIntegration(authService, minecraftLauncher);
 
     // Register IPC handlers before loading the file
     registerIpcHandlers();
@@ -1139,6 +1170,11 @@ app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') {
         app.quit();
     }
+});
+
+app.on('will-quit', () => {
+    // Perform cleanup operations
+    if (authCleanup) authCleanup();
 });
 
 process.on('uncaughtException', (error) => {

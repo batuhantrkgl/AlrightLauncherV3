@@ -1373,13 +1373,38 @@ class MinecraftLauncher {
     try {
       logger.info(`Launching Minecraft ${version} for user ${username}`);
       
-      // Check if auth data was provided
-      const authData = options.authData;
+      // Check if auth data was provided or if we need to request it
+      let authData = options.authData;
+      let offlineMode = options.offline !== false; // Default to offline mode unless explicitly set to false
+      
+      // If online mode is requested but no auth data provided, try to get it from the global auth service
+      if (!offlineMode && !authData && global.authService) {
+        try {
+          logger.info('Online mode requested, retrieving auth data from AuthService');
+          authData = await global.authService.getGameAuthData();
+          if (authData) {
+            logger.info(`Retrieved auth data for ${authData.profile.name}`);
+            options.authData = authData;
+            offlineMode = false; // We have valid auth data, set offline mode to false
+          } else {
+            logger.warn('Failed to get auth data, falling back to offline mode');
+            offlineMode = true;
+          }
+        } catch (error) {
+          logger.error(`Error retrieving auth data: ${error.message}`);
+          logger.warn('Falling back to offline mode due to auth error');
+          offlineMode = true;
+        }
+      }
+      
       const usingMicrosoftAuth = !!(authData && authData.profile && authData.accessToken);
       
+      // Update offline mode based on whether we have valid auth data
       if (usingMicrosoftAuth) {
+        offlineMode = false;
         logger.info(`Using Microsoft authentication for ${username} (${authData.profile.name})`);
       } else {
+        offlineMode = true;
         logger.info(`Using offline mode for ${username}`);
       }
 
@@ -1539,13 +1564,29 @@ class MinecraftLauncher {
           version,
         });
 
+        // Use the actual Microsoft profile name if authenticated
+        const gameUsername = usingMicrosoftAuth ? authData.profile.name : username;
+        
         gameArgs = this.buildGameArgs(versionInfo, {
-          username: usingMicrosoftAuth ? authData.profile.name : username,
+          username: gameUsername,
           version,
           gameDir,
           assetsDir,
           authData
         });
+        
+        // Add special JVM arguments for offline mode ONLY
+        // This is crucial - we should NOT set these for authenticated sessions
+        if (offlineMode) {
+          // Only add mock auth server URLs for offline mode
+          logger.info('Using offline mode with mock authentication');
+          jvmArgs.push('-Dminecraft.api.auth.host=http://127.0.0.1:25566');
+          jvmArgs.push('-Dminecraft.api.account.host=http://127.0.0.1:25566');
+          jvmArgs.push('-Dminecraft.api.session.host=http://127.0.0.1:25566');
+          jvmArgs.push('-Dminecraft.api.services.host=http://127.0.0.1:25566');
+        } else {
+          logger.info('Using real Minecraft authentication - no mock servers');
+        }
       } catch (error) {
         logger.error(`Error building launch arguments: ${error.message}`);
         throw new Error(`Failed to build launch arguments: ${error.message}`);
