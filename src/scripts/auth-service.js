@@ -24,52 +24,276 @@ class AuthService {
         
         // In-memory storage for auth data
         this.authData = null;
+        this.authDataLoaded = false;
         
-        // Load saved auth data
-        this.loadAuthData();
+        // Initialize auth data immediately so it's available
+        this.initAuthData();
+        
+        // Set up automatic token refresh 
+        this.setupTokenRefresh();
     }
     
-    // Load saved authentication data
+    // Add new asynchronous initialization method
+    async initAuthData() {
+        try {
+            await this.loadAuthData();
+        } catch (error) {
+            logger.error('Failed to initialize auth data:', error);
+        }
+    }
+    
+    // Modify loadAuthData to be more robust
     async loadAuthData() {
         try {
             if (await fs.pathExists(this.authDataPath)) {
-                this.authData = await fs.readJson(this.authDataPath);
-                logger.info('Authentication data loaded successfully');
+                try {
+                    const data = await fs.readJson(this.authDataPath);
+                    
+                    if (!data || typeof data !== 'object') {
+                        logger.warn('Auth data file exists but contains invalid data');
+                        this.authData = null;
+                        return;
+                    }
+                    
+                    this.authData = data;
+                    logger.info('Authentication data loaded successfully');
+                    logger.info(`Auth data for: ${this.authData?.profile?.name || 'unknown user'}`);
+                    
+                    // Validate the loaded data
+                    if (this.authData && this.authData.expiresAt) {
+                        // If token is expired or about to expire (within 10 minutes), try to refresh it
+                        const tokenExpiryTime = this.authData.expiresAt;
+                        const currentTime = Date.now();
+                        const timeUntilExpiry = tokenExpiryTime - currentTime;
+                        
+                        logger.info(`Token expires in ${Math.round(timeUntilExpiry / 60000)} minutes`);
+                        
+                        if (timeUntilExpiry < 600000) { // Less than 10 minutes until expiry
+                            logger.info('Auth token expired or about to expire, attempting refresh');
+                            try {
+                                await this.refreshAccessToken();
+                            } catch (refreshError) {
+                                logger.warn(`Token refresh failed: ${refreshError.message}`);
+                                // Only clear auth data if refresh fails with specific errors
+                                if (refreshError.message.includes('invalid_grant') || 
+                                    refreshError.message.includes('Token refresh failed: 400') ||
+                                    refreshError.message.includes('Token refresh failed: 401')) {
+                                    logger.warn('Invalid refresh token, clearing auth data');
+                                    await this.logout();
+                                }
+                            }
+                        } else {
+                            logger.info(`Auth token valid for ${Math.floor(timeUntilExpiry / 60000)} more minutes`);
+                        }
+                    } else {
+                        logger.warn('Loaded auth data is missing expiration time');
+                    }
+                } catch (parseError) {
+                    logger.error(`Failed to parse auth data file: ${parseError.message}`);
+                    // Try to back up the corrupted file
+                    try {
+                        const backupPath = `${this.authDataPath}.bak`;
+                        await fs.copy(this.authDataPath, backupPath);
+                        logger.info(`Backed up corrupted auth file to ${backupPath}`);
+                    } catch (backupError) {
+                        logger.error(`Failed to backup corrupted auth file: ${backupError.message}`);
+                    }
+                    this.authData = null;
+                }
             } else {
                 logger.info('No saved authentication data found');
+                this.authData = null;
             }
         } catch (error) {
             logger.error('Failed to load authentication data:', error);
             this.authData = null;
+        } finally {
+            this.authDataLoaded = true;
         }
     }
     
-    // Save authentication data to disk
+    // Improve saveAuthData to ensure the directory exists
     async saveAuthData() {
         try {
             if (this.authData) {
+                // Ensure the directory exists
                 await fs.ensureDir(path.dirname(this.authDataPath));
-                await fs.writeJson(this.authDataPath, this.authData, { spaces: 2 });
+                
+                // Add a timestamp to the saved data for debugging
+                const dataToSave = {
+                    ...this.authData,
+                    savedAt: Date.now()
+                };
+                
+                // Write the file with pretty formatting (makes debugging easier)
+                await fs.writeJson(this.authDataPath, dataToSave, { spaces: 2 });
+                
                 logger.info('Authentication data saved successfully');
+                logger.info(`Saved auth data for: ${this.authData?.profile?.name || 'unknown user'}`);
+                return true;
+            } else {
+                logger.warn('No auth data to save');
+                return false;
             }
         } catch (error) {
             logger.error('Failed to save authentication data:', error);
+            logger.error(error.stack);
+            return false;
         }
     }
     
-    // Check if user is logged in
+    // Set up periodic token refresh
+    setupTokenRefresh() {
+        // Check token validity every 15 minutes
+        const REFRESH_INTERVAL = 15 * 60 * 1000; // 15 minutes
+        
+        this.refreshInterval = setInterval(() => {
+            if (this.isLoggedIn()) {
+                const timeUntilExpiry = this.authData.expiresAt - Date.now();
+                
+                // Refresh if less than 30 minutes until expiry
+                if (timeUntilExpiry < 30 * 60 * 1000) {
+                    logger.info('Running scheduled token refresh');
+                    this.refreshAccessToken().catch(error => {
+                        logger.warn(`Scheduled token refresh failed: ${error.message}`);
+                    });
+                }
+            }
+        }, REFRESH_INTERVAL);
+    }
+    
+    // Enhanced version of refreshAccessToken
+    async refreshAccessToken() {
+        try {
+            if (!this.authData || !this.authData.refreshToken) {
+                throw new Error('No refresh token available');
+            }
+            
+            logger.info('Refreshing access token using refresh token');
+            
+            const body = new URLSearchParams({
+                client_id: this.clientId,
+                refresh_token: this.authData.refreshToken,
+                grant_type: 'refresh_token'
+            });
+            
+            const response = await fetch(this.tokenUrl, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded'
+                },
+                body: body
+            });
+            
+            // Get the response as text first for better error logging
+            const responseText = await response.text();
+            
+            if (!response.ok) {
+                logger.error(`Token refresh failed: Status ${response.status} - ${responseText}`);
+                
+                // If refresh token is invalid, we need to force re-login
+                if (response.status === 400 || response.status === 401) {
+                    logger.warn('Refresh token invalid or expired, clearing saved authentication');
+                    await this.logout();
+                }
+                
+                throw new Error(`Token refresh failed: ${response.status} ${response.statusText}`);
+            }
+            
+            let tokenData;
+            try {
+                tokenData = JSON.parse(responseText);
+            } catch (parseError) {
+                logger.error(`Failed to parse token response: ${parseError.message}`);
+                logger.error(`Response data: ${responseText}`);
+                throw new Error('Invalid token response format');
+            }
+            
+            if (!tokenData.access_token) {
+                logger.error('Token response missing access_token');
+                logger.error(`Response data: ${JSON.stringify(tokenData)}`);
+                throw new Error('Invalid token response: missing access_token');
+            }
+            
+            // Update the authentication data
+            this.authData = {
+                ...this.authData,
+                accessToken: tokenData.access_token,
+                refreshToken: tokenData.refresh_token || this.authData.refreshToken, // Keep old refresh token if not provided
+                expiresAt: Date.now() + (tokenData.expires_in * 1000)
+            };
+            
+            // Re-validate Minecraft profile with new token
+            try {
+                const profile = await this.getMinecraftProfile(this.authData.accessToken);
+                this.authData.profile = profile;
+            } catch (profileError) {
+                logger.error(`Failed to refresh Minecraft profile: ${profileError.message}`);
+                // Continue anyway, at least we have a valid token
+            }
+            
+            // Save updated auth data
+            await this.saveAuthData();
+            logger.info('Access token refreshed successfully');
+            
+            return true;
+        } catch (error) {
+            logger.error(`Failed to refresh access token: ${error.message}`);
+            throw error;
+        }
+    }
+    
+    // Improved isLoggedIn to wait for auth data to be loaded
+    async ensureAuthDataLoaded() {
+        if (!this.authDataLoaded) {
+            logger.info('Waiting for auth data to load...');
+            await this.loadAuthData();
+        }
+    }
+    
     isLoggedIn() {
-        return this.authData && this.authData.profile && 
-               this.authData.accessToken && this.authData.expiresAt && 
-               this.authData.expiresAt > Date.now();
+        return (
+            this.authData && 
+            this.authData.profile && 
+            this.authData.accessToken && 
+            this.authData.expiresAt && 
+            this.authData.expiresAt > Date.now() + 60000 // Make sure we have at least a minute left
+        );
     }
     
-    // Get the current user profile
-    getProfile() {
-        return this.isLoggedIn() ? this.authData.profile : null;
+    // Modify getProfile to ensure auth data is loaded
+    async getProfile() {
+        try {
+            // Make sure auth data is loaded
+            await this.ensureAuthDataLoaded();
+            
+            // If not logged in, return null immediately
+            if (!this.isLoggedIn()) {
+                return null;
+            }
+            
+            // If logged in but expiring soon, try to refresh
+            if (this.authData.expiresAt < Date.now() + 10 * 60 * 1000) { // Less than 10 minutes left
+                try {
+                    logger.info('Token expiring soon, refreshing automatically');
+                    await this.refreshAccessToken();
+                } catch (refreshError) {
+                    logger.warn(`Auto-refresh failed during getProfile: ${refreshError.message}`);
+                    // Continue with the existing token if it's still valid
+                    if (!this.isLoggedIn()) {
+                        return null;
+                    }
+                }
+            }
+            
+            return this.authData.profile;
+        } catch (error) {
+            logger.error(`Error in getProfile: ${error.message}`);
+            return null;
+        }
     }
     
-    // Start the login process
+    // Add an improved login method with better error handling
     async login() {
         try {
             logger.info('Starting Microsoft authentication flow');
@@ -79,14 +303,16 @@ class AuthService {
             const msAuthResult = await this.getMicrosoftAuthCode();
             
             if (!msAuthResult || !msAuthResult.code) {
-                throw new Error('Failed to get Microsoft authorization code');
+                logger.error('Failed to get Microsoft authorization code');
+                return { error: 'Failed to get Microsoft authorization code' };
             }
             
             logger.info('Step 2: Exchanging code for access token');
             const tokenResponse = await this.exchangeCodeForToken(msAuthResult.code);
             
             if (!tokenResponse || !tokenResponse.access_token) {
-                throw new Error('Failed to get access token');
+                logger.error('Failed to get access token');
+                return { error: 'Failed to get access token' };
             }
             
             // Step 3: Authenticate with Xbox Live
@@ -94,7 +320,8 @@ class AuthService {
             const xboxLiveResponse = await this.authenticateWithXboxLive(tokenResponse.access_token);
             
             if (!xboxLiveResponse || !xboxLiveResponse.Token) {
-                throw new Error('Xbox Live authentication failed');
+                logger.error('Xbox Live authentication failed');
+                return { error: 'Xbox Live authentication failed' };
             }
             
             // Step 4: Get XSTS token
@@ -102,7 +329,8 @@ class AuthService {
             const xstsResponse = await this.getXstsToken(xboxLiveResponse.Token);
             
             if (!xstsResponse || !xstsResponse.token) {
-                throw new Error('Failed to get XSTS token');
+                logger.error('Failed to get XSTS token');
+                return { error: 'Failed to get XSTS token' };
             }
             
             // Step 5: Authenticate with Minecraft
@@ -110,7 +338,8 @@ class AuthService {
             const mcResponse = await this.authenticateWithMinecraft(xstsResponse);
             
             if (!mcResponse || !mcResponse.access_token) {
-                throw new Error('Minecraft authentication failed');
+                logger.error('Minecraft authentication failed');
+                return { error: 'Minecraft authentication failed' };
             }
             
             // Step 6: Get Minecraft profile
@@ -118,7 +347,8 @@ class AuthService {
             const profile = await this.getMinecraftProfile(mcResponse.access_token);
             
             if (!profile || !profile.name) {
-                throw new Error('Failed to get Minecraft profile');
+                logger.error('Failed to get Minecraft profile');
+                return { error: 'Failed to get Minecraft profile' };
             }
             
             // Save authentication data
@@ -134,17 +364,37 @@ class AuthService {
             return profile;
         } catch (error) {
             logger.error('Login failed:', error);
-            throw error;
+            
+            // Provide more specific error messages based on error types
+            if (error.message?.includes('Xbox account')) {
+                return { error: "This account doesn't have an Xbox account. Please create one first." };
+            } else if (error.message?.includes('country where Xbox Live is not available')) {
+                return { error: "Xbox Live is not available in your country." };
+            } else if (error.message?.includes('own Minecraft')) {
+                return { error: "You don't own Minecraft. Please purchase the game first." };
+            }
+            
+            return { error: error.message || 'Authentication failed' };
         }
     }
     
-    // Logout and clear saved data
+    // Improve logout to be more robust
     async logout() {
-        this.authData = null;
         try {
+            if (this.refreshInterval) {
+                clearInterval(this.refreshInterval);
+                this.refreshInterval = null;
+            }
+            
+            // Clear the in-memory auth data
+            this.authData = null;
+            
+            // Remove the auth data file
             if (await fs.pathExists(this.authDataPath)) {
                 await fs.remove(this.authDataPath);
+                logger.info(`Removed auth data file at ${this.authDataPath}`);
             }
+            
             logger.info('Logged out successfully');
             return true;
         } catch (error) {

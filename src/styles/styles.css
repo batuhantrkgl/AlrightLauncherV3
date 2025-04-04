@@ -1687,6 +1687,40 @@ body, .left-panel, .right-panel, .play-button, .version-dropdown,
     background-color: rgba(240, 240, 240, 0.1);
     color: var(--text-color);
     cursor: not-allowed;
+    border: 1px solid rgba(0, 128, 0, 0.3);
+    box-shadow: 0 0 5px rgba(0, 128, 0, 0.2);
+}
+
+.ms-login-btn {
+    font-family: 'Poppins', sans-serif;
+    line-height: 1;
+    text-shadow: 4px 4px 8px rgba(0, 0, 0, 0.2);
+    padding: 0.8rem 1.2rem;
+    border-radius: 8px;
+    opacity: 0.9;
+    outline: none;
+    transition: all var(--transition-speed);
+    border: none;
+    background: var(--primary-color);
+    color: var(--text-color);
+    width: 100%;
+    max-width: 200px;
+    cursor: pointer;
+    margin-top: 10px;
+}
+
+.ms-login-btn:hover {
+    background-color: #0E6B0E;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+}
+
+.ms-login-btn:disabled {
+    background-color: #3a8c3a;
+    cursor: wait;
+    opacity: 0.7;
+    transform: none;
+    box-shadow: none;
 }
 
 .ms-login-btn:hover {
