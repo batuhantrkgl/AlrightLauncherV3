@@ -675,10 +675,53 @@ class AuthService {
             
             const data = await response.json();
             logger.info('Successfully authenticated with Minecraft services');
+            
+            // Store the response timestamp to help with token validity checks
+            data.obtainedAt = Date.now();
+            
             return data;
         } catch (error) {
             logger.error('Minecraft authentication failed:', error);
             throw error;
+        }
+    }
+    
+    // Add a new method to get game authentication data
+    async getGameAuthData() {
+        try {
+            // Make sure auth data is loaded
+            await this.ensureAuthDataLoaded();
+            
+            // If not logged in, return null to indicate offline mode should be used
+            if (!this.isLoggedIn()) {
+                return null;
+            }
+            
+            // If token is expiring soon, try to refresh
+            if (this.authData.expiresAt < Date.now() + 10 * 60 * 1000) { // Less than 10 minutes left
+                try {
+                    await this.refreshAccessToken();
+                } catch (refreshError) {
+                    logger.warn(`Auto-refresh failed when getting game auth data: ${refreshError.message}`);
+                    // If refresh fails and token is expired, return null
+                    if (!this.isLoggedIn()) {
+                        return null;
+                    }
+                }
+            }
+            
+            // Return the auth data needed for launching the game
+            return {
+                accessToken: this.authData.accessToken,
+                profile: this.authData.profile,
+                // Include additional fields that might be useful
+                username: this.authData.profile.name,
+                uuid: this.authData.profile.id,
+                expiresAt: this.authData.expiresAt
+            };
+        } catch (error) {
+            logger.error(`Error getting game auth data: ${error.message}`);
+            return null;
         }
     }
     

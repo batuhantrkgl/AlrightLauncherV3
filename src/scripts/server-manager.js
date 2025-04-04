@@ -111,6 +111,9 @@ class ServerManager {
 
         // Create usercache.json for UUID tracking
         await fs.writeFile(path.join(serverPath, 'usercache.json'), '[]');
+        
+        // Create server-whitelist.json that can be edited later to add more players
+        await fs.writeFile(path.join(serverPath, 'whitelist.json'), '[]');
 
         // Create server configuration
         const config = {
@@ -118,7 +121,8 @@ class ServerManager {
             memory,
             port,
             autostart,
-            created: new Date().toISOString()
+            created: new Date().toISOString(),
+            useOnlineMode: false // Default to offline mode (compatible with cracked clients)
         };
         await fs.writeFile(
             path.join(serverPath, 'server-config.json'),
@@ -143,7 +147,7 @@ class ServerManager {
         if (!fs.existsSync(serverPath)) {
             throw new Error('Server does not exist');
         }
-
+        
         // Load server config if it exists
         let config = { memory: 2048 };
         try {
@@ -154,7 +158,7 @@ class ServerManager {
         } catch (error) {
             console.warn('Failed to load server config:', error);
         }
-
+        
         // Use provided memory or fall back to config/default
         const memoryMB = memory || config.memory || 2048;
 
@@ -162,7 +166,7 @@ class ServerManager {
         if (!fs.existsSync(path.join(serverPath, 'eula.txt'))) {
             await fs.writeFile(path.join(serverPath, 'eula.txt'), 'eula=true');
         }
-
+        
         const server = spawn('java', [
             `-Xmx${memoryMB}M`,
             `-Xms${memoryMB}M`,
@@ -173,9 +177,9 @@ class ServerManager {
             cwd: serverPath,
             stdio: ['pipe', 'pipe', 'pipe']  // Enable all stdio channels
         });
-
+        
         this.servers.set(name, server);
-
+        
         // Create log file
         const logStream = fs.createWriteStream(path.join(serverPath, 'latest.log'), { flags: 'a' });
 
@@ -184,13 +188,13 @@ class ServerManager {
             let startupBuffer = '';
             const startTimeout = 180000; // 3 minutes timeout
             let errorOutput = '';
-
+            
             server.stdout.on('data', (data) => {
                 const output = data.toString();
                 startupBuffer += output;
                 this.emitLog(name, 'info', output);
                 logStream.write(output);
-
+                
                 // Check for various success indicators
                 if (output.includes('Done') || 
                     output.includes('For help, type "help"') ||
@@ -202,24 +206,24 @@ class ServerManager {
                     });
                 }
             });
-
+            
             server.stderr.on('data', (data) => {
                 const output = data.toString();
                 errorOutput += output;
                 this.emitLog(name, 'error', output);
                 logStream.write(output);
             });
-
+            
             server.on('error', (error) => {
                 this.emitLog(name, 'error', `Server process error: ${error.message}`);
                 reject(error);
             });
-
+            
             server.on('exit', (code) => {
                 this.emitLog(name, 'info', `Server stopped with code ${code}`);
                 this.servers.delete(name);
                 logStream.end();
-
+                
                 if (!serverStarted) {
                     reject(new Error(
                         `Server failed to start (exit code ${code})\n` +
@@ -228,7 +232,7 @@ class ServerManager {
                     ));
                 }
             });
-
+            
             // Progress checking interval
             const progressCheck = setInterval(() => {
                 if (startupBuffer.includes('Loading properties') || 
@@ -239,7 +243,7 @@ class ServerManager {
                     timeoutHandle = setTimeout(onTimeout, startTimeout);
                 }
             }, 5000);
-
+            
             // Timeout handler
             const onTimeout = () => {
                 clearInterval(progressCheck);
@@ -251,7 +255,8 @@ class ServerManager {
                     ));
                 }
             };
-
+            
+            // Set initial timeout
             let timeoutHandle = setTimeout(onTimeout, startTimeout);
         });
     }
@@ -273,7 +278,7 @@ class ServerManager {
     stopServer(name) {
         const server = this.servers.get(name);
         if (!server) return false;
-
+        
         server.stdin.write('stop\n');
         this.servers.delete(name);
         return true;
@@ -293,18 +298,18 @@ class ServerManager {
             return 25565;
         }
     }
-
+    
     async getServerList() {
         try {
             await fs.ensureDir(this.serverDir);
             const dirs = await fs.readdir(this.serverDir);
             
-            return Promise.all(dirs.map(async (name) => {
+            const serverPromises = dirs.map(async (name) => {
                 const serverPath = path.join(this.serverDir, name);
                 const isDirectory = (await fs.stat(serverPath)).isDirectory();
                 
                 if (!isDirectory) return null;
-
+                
                 const isRunning = this.isServerRunning(name);
                 const port = this.getServerPort(name);
                 
@@ -318,7 +323,7 @@ class ServerManager {
                 } catch (error) {
                     console.warn(`Failed to load config for server ${name}:`, error);
                 }
-
+                
                 // Load server.properties
                 let properties = {};
                 try {
@@ -330,7 +335,7 @@ class ServerManager {
                 } catch (error) {
                     console.warn(`Failed to load properties for server ${name}:`, error);
                 }
-
+                
                 return {
                     name,
                     path: serverPath,
@@ -340,7 +345,10 @@ class ServerManager {
                     properties,
                     version: config.version || 'unknown'
                 };
-            }));
+            });
+            
+            const servers = await Promise.all(serverPromises);
+            return servers.filter(server => server !== null);
         } catch (error) {
             console.error('Error getting server list:', error);
             return [];
@@ -359,6 +367,126 @@ class ServerManager {
             }
         });
         return properties;
+    }
+
+    async configureServerAuthentication(serverName, enableOnlineMode, playerData = null) {
+        const serverPath = path.join(this.serverDir, serverName);
+        if (!fs.existsSync(serverPath)) {
+            throw new Error('Server does not exist');
+        }
+        
+        try {
+            // Load existing config
+            const configPath = path.join(serverPath, 'server-config.json');
+            let config = {};
+            if (fs.existsSync(configPath)) {
+                config = JSON.parse(await fs.readFile(configPath, 'utf8'));
+            }
+            
+            // Update config with new online mode setting
+            config.useOnlineMode = !!enableOnlineMode;
+            
+            // Save updated config
+            await fs.writeFile(
+                configPath, 
+                JSON.stringify(config, null, 2)
+            );
+            
+            // Update server properties
+            const propertiesPath = path.join(serverPath, 'server.properties');
+            let properties = '';
+            if (fs.existsSync(propertiesPath)) {
+                properties = await fs.readFile(propertiesPath, 'utf8');
+            }
+            
+            // Update online-mode property
+            if (properties.includes('online-mode=')) {
+                properties = properties.replace(
+                    /online-mode=(true|false)/,
+                    `online-mode=${enableOnlineMode}`
+                );
+            } else {
+                properties += `\nonline-mode=${enableOnlineMode}`;
+            }
+            
+            await fs.writeFile(propertiesPath, properties);
+            
+            // If player data is provided and it has a Microsoft profile, add to whitelist
+            if (playerData && playerData.profile && enableOnlineMode) {
+                await this.addPlayerToWhitelist(serverName, {
+                    name: playerData.profile.name,
+                    uuid: playerData.profile.id
+                });
+            }
+            
+            // If server is running, notify it of the change
+            if (this.isServerRunning(serverName)) {
+                const server = this.servers.get(serverName);
+                server.stdin.write(`whitelist reload\n`);
+                
+                // Only restart if online mode changed and server is running
+                return {
+                    success: true,
+                    requiresRestart: true,
+                    message: 'Authentication mode updated. Server restart recommended.'
+                };
+            }
+            
+            return {
+                success: true,
+                requiresRestart: false,
+                message: 'Authentication mode updated'
+            };
+        } catch (error) {
+            console.error('Failed to configure server authentication:', error);
+            throw error;
+        }
+    }
+
+    async addPlayerToWhitelist(serverName, player) {
+        const serverPath = path.join(this.serverDir, serverName);
+        if (!fs.existsSync(serverPath)) {
+            throw new Error('Server does not exist');
+        }
+        
+        try {
+            // Read current whitelist
+            const whitelistPath = path.join(serverPath, 'whitelist.json');
+            let whitelist = [];
+            if (fs.existsSync(whitelistPath)) {
+                whitelist = JSON.parse(await fs.readFile(whitelistPath, 'utf8'));
+            }
+            
+            // Check if player is already on whitelist
+            const existingIndex = whitelist.findIndex(p => 
+                p.name === player.name || (player.uuid && p.uuid === player.uuid)
+            );
+            
+            if (existingIndex >= 0) {
+                // Update existing entry
+                whitelist[existingIndex] = player;
+            } else {
+                // Add new player
+                whitelist.push(player);
+            }
+            
+            // Save updated whitelist
+            await fs.writeFile(whitelistPath, JSON.stringify(whitelist, null, 2));
+            
+            // If server is running, reload whitelist
+            if (this.isServerRunning(serverName)) {
+                const server = this.servers.get(serverName);
+                server.stdin.write(`whitelist reload\n`);
+            }
+            
+            return {
+                success: true,
+                message: `Added ${player.name} to whitelist`
+            };
+        } catch (error) {
+            console.error('Failed to add player to whitelist:', error);
+            throw error;
+        }
     }
 }
 

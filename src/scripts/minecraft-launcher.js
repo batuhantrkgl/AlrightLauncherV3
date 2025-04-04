@@ -559,19 +559,34 @@ class MinecraftLauncher {
   }
 
   buildGameArgs(versionJson, options) {
-    const { username, version, gameDir, assetsDir } = options;
+    const { username, version, gameDir, assetsDir, authData } = options;
     const args = [];
-    const uuid = this.generateUUID();
 
+    // Use real auth data if available, otherwise fallback to offline mode
+    const useRealAuth = authData && authData.profile && authData.accessToken;
+    
     // Basic game arguments present in all versions
     args.push("--username", username);
     args.push("--version", version);
     args.push("--gameDir", gameDir);
     args.push("--assetsDir", assetsDir);
     args.push("--assetIndex", versionJson.assetIndex.id);
-    args.push("--uuid", uuid);
-    args.push("--accessToken", "offline");
-    args.push("--userType", "mojang");
+    
+    if (useRealAuth) {
+      // Use real Microsoft authentication data
+      logger.info(`Using Microsoft authentication for ${username}`);
+      args.push("--uuid", authData.profile.id);
+      args.push("--accessToken", authData.accessToken);
+      args.push("--userType", "msa");  // Microsoft Account
+    } else {
+      // Fallback to offline mode
+      logger.info(`Using offline mode for ${username}`);
+      const uuid = this.generateUUID();
+      args.push("--uuid", uuid);
+      args.push("--accessToken", "offline");
+      args.push("--userType", "mojang");
+    }
+    
     args.push("--versionType", "release");
 
     return args;
@@ -1357,6 +1372,16 @@ class MinecraftLauncher {
   async launch(version, username, options = {}) {
     try {
       logger.info(`Launching Minecraft ${version} for user ${username}`);
+      
+      // Check if auth data was provided
+      const authData = options.authData;
+      const usingMicrosoftAuth = !!(authData && authData.profile && authData.accessToken);
+      
+      if (usingMicrosoftAuth) {
+        logger.info(`Using Microsoft authentication for ${username} (${authData.profile.name})`);
+      } else {
+        logger.info(`Using offline mode for ${username}`);
+      }
 
       const versionDir = path.join(this.baseDir, "versions", version);
       const versionJsonPath = path.join(versionDir, `${version}.json`);
@@ -1515,10 +1540,11 @@ class MinecraftLauncher {
         });
 
         gameArgs = this.buildGameArgs(versionInfo, {
-          username,
+          username: usingMicrosoftAuth ? authData.profile.name : username,
           version,
           gameDir,
           assetsDir,
+          authData
         });
       } catch (error) {
         logger.error(`Error building launch arguments: ${error.message}`);
