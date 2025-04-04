@@ -2447,18 +2447,20 @@ async function initializeAuth() {
         }
     });
     
-    // Add Ctrl+click handler for username (to logout)
+    // Update: Add Ctrl+Shift+click handler for username (to logout)
     usernameInput.addEventListener('click', async (event) => {
-        if (isAuthenticated && event.ctrlKey) {
+        // Changed from just ctrlKey to requiring both ctrl and shift
+        if (isAuthenticated && event.ctrlKey && event.shiftKey) {
             const confirmLogout = confirm('Do you want to log out from your Microsoft account?');
             if (confirmLogout) {
                 try {
                     const success = await logout();
                     if (success) {
-                        showNotification('Successfully logged out');
+                        alert('Successfully logged out');
                     }
                 } catch (error) {
-                    showError(`Logout failed: ${error.message}`);
+                    console.error('Logout error:', error);
+                    alert(`Logout failed: ${error.message}`);
                 }
             }
         }
@@ -2507,7 +2509,8 @@ function updateUIForLoggedInUser(profile) {
     usernameInput.value = profile.name;
     usernameInput.disabled = true;
     usernameInput.classList.add('username-locked');
-    usernameInput.title = 'Logged in with Microsoft account (Ctrl+click to logout)';
+    // Update title text to reflect Ctrl+Shift requirement
+    usernameInput.title = 'Logged in with Microsoft account (Ctrl+Shift+click to logout)';
     usernameInput.placeholder = '';
     
     // Hide login button
@@ -2724,6 +2727,25 @@ async function initializeAuth() {
         }
     });
     
+    // Update: Add Ctrl+Shift+click handler for username (to logout)
+    usernameInput.addEventListener('click', async (event) => {
+        // Changed from just ctrlKey to requiring both ctrl and shift
+        if (isAuthenticated && event.ctrlKey && event.shiftKey) {
+            const confirmLogout = confirm('Do you want to log out from your Microsoft account?');
+            if (confirmLogout) {
+                try {
+                    const success = await logout();
+                    if (success) {
+                        alert('Successfully logged out');
+                    }
+                } catch (error) {
+                    console.error('Logout error:', error);
+                    alert(`Logout failed: ${error.message}`);
+                }
+            }
+        }
+    });
+    
     // ...existing code...
 }
 
@@ -2748,8 +2770,10 @@ async function logout() {
             // Use alert instead of showError
             alert('Logout failed. Please try again.');
             
-            loginButton.textContent = 'Login with Microsoft';
-            loginButton.disabled = false;
+            if (loginButton) {
+                loginButton.textContent = 'Login with Microsoft';
+                loginButton.disabled = false;
+            }
             return false;
         }
     } catch (error) {
@@ -2790,11 +2814,14 @@ function updateUIForLoggedInUser(profile) {
         usernameInput.value = profile.name;
         usernameInput.disabled = true;
         usernameInput.classList.add('username-locked');
-        usernameInput.title = 'Logged in with Microsoft account (Ctrl+click to logout)';
+        // Update title text to reflect Ctrl+Shift requirement
+        usernameInput.title = 'Logged in with Microsoft account (Ctrl+Shift+click to logout)';
         usernameInput.placeholder = '';
         
-        // Hide login button
-        loginButton.style.display = 'none';
+        // Hide login button if it exists
+        if (loginButton) {
+            loginButton.style.display = 'none';
+        }
         
         // Store username in localStorage for auto-fill if they logout
         localStorage.setItem('lastUsername', profile.name);
@@ -2843,7 +2870,8 @@ function updateUIForLoggedInUser(profile) {
         usernameInput.value = profile.name;
         usernameInput.disabled = true;
         usernameInput.classList.add('username-locked');
-        usernameInput.title = 'Logged in with Microsoft account (Ctrl+click to logout)';
+        // Update title text to reflect Ctrl+Shift requirement
+        usernameInput.title = 'Logged in with Microsoft account (Ctrl+Shift+click to logout)';
         usernameInput.placeholder = '';
         
         // Hide login button if it exists
@@ -3048,9 +3076,10 @@ async function initializeAuth() {
             loginButton = createLoginButton(usernameInput);
         }
         
-        // Add Ctrl+click handler for username (to logout)
+        // Update: Add Ctrl+Shift+click handler for username (to logout)
         usernameInput.addEventListener('click', async (event) => {
-            if (isAuthenticated && event.ctrlKey) {
+            // Changed from just ctrlKey to requiring both ctrl and shift
+            if (isAuthenticated && event.ctrlKey && event.shiftKey) {
                 const confirmLogout = confirm('Do you want to log out from your Microsoft account?');
                 if (confirmLogout) {
                     try {
