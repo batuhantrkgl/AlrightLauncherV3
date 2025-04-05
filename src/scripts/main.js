@@ -306,8 +306,13 @@ function registerIpcHandlers() {
             
             // Monitor for crashes
             if (result.process) {
+                // Store the version with the process object to use it in the close event handler
+                result.process.gameVersion = options.version;
+                
                 result.process.on('exit', async (code) => {
-                    logger.info(`Game process exited with code: ${code}`);
+                    // Use the stored version property instead of relying on a closure variable
+                    const gameVersion = result.process.gameVersion || 'unknown';
+                    logger.info(`Game process exited with code ${code} for version ${gameVersion}`);
                     
                     // Reset Discord RPC status when game exits
                     discordRPC.setDefaultActivity();
@@ -315,7 +320,8 @@ function registerIpcHandlers() {
                     // Check for crash reports only on abnormal exits
                     if (code !== 0) {
                         try {
-                            const crashReportFound = await checkForCrashReport(version);
+                            // Use the stored game version here
+                            const crashReportFound = await checkForCrashReport(gameVersion);
                             if (crashReportFound) {
                                 logger.info('Crash report was found and sent to renderer');
                             }
@@ -324,10 +330,10 @@ function registerIpcHandlers() {
                         }
                     }
                     
-                    // Always send game-closed event
+                    // Always send game-closed event with the correct version from the process object
                     if (mainWindow && !mainWindow.isDestroyed()) {
                         mainWindow.webContents.send('game-closed', {
-                            version,
+                            version: gameVersion,
                             code,
                             message: code === 0 ? 'normal exit' : 'error exit'
                         });
@@ -1273,4 +1279,32 @@ async function initializeUpdateService() {
             logger.error('Background update check failed:', error.message);
         }
     }, 5000);
+}
+
+// Find the game launch function that starts the child process
+// Around line 300-330, there should be code like this:
+
+function launchGame(options) {
+    // ...existing code...
+    
+    const gameProcess = spawn('java', javaArgs, { cwd });
+    
+    // Store the version with the process
+    gameProcess.gameVersion = options.version || 'unknown';
+    
+    // When the game process closes
+    gameProcess.on('close', (code) => {
+        // Use the stored version instead of an undefined variable
+        logger.info(`Game process exited with code ${code} for version ${gameProcess.gameVersion}`);
+        
+        // Notify renderer
+        mainWindow.webContents.send('game-closed', {
+            code,
+            version: gameProcess.gameVersion  // Use the stored version here
+        });
+        
+        // ...existing code...
+    });
+    
+    // ...existing code...
 }
