@@ -7,9 +7,9 @@
     "releaseNotes": "- Initial stable release\n- Full offline mode support\n- Fixed server creation issues\n- Improved launcher stability\n Microsoft Authentication Support etc."
   },
   "beta": {
-    "version": "3.1.2-beta.73495e0",
-    "releaseDate": "2025-04-04",
-    "downloadUrl": "https://github.com/batuhantrkgl/AlrightLauncherV3/releases/download/v3.1.2-beta.73495e0/AlrightLauncher-Setup-3.1.2.exe",
+    "version": "3.1.2-beta.b73ce1e",
+    "releaseDate": "2025-04-05",
+    "downloadUrl": "https://github.com/batuhantrkgl/AlrightLauncherV3/releases/download/v3.1.2-beta.b73ce1e/AlrightLauncher-Setup-3.1.2.exe",
     "sha256": "",
     "releaseNotes": "\n"
   }
