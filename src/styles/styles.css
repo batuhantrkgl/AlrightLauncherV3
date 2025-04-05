@@ -262,7 +262,7 @@ body {
     display: flex;
     flex-direction: column;
     justify-content: space-between;
-    padding: 3rem 2rem; /* Increased top padding */
+    padding: 2.1rem 2rem; /* Increased top padding */
     color: white;
     position: relative;
     overflow: hidden;
@@ -310,7 +310,6 @@ body {
     align-self: flex-end;
     position: relative;
     overflow: hidden;
-    animation: pulse 200s infinite;
 }
 
 .play-button:hover {
