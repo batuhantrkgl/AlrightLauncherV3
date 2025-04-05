@@ -2357,143 +2357,264 @@ window.addEventListener('DOMContentLoaded', async () => {
 // Add a variable to track authentication state
 let isAuthenticated = false;
 let loginButton = null;
+let ctrlShiftPressed = false;
 
 // Function to initialize authentication UI
 async function initializeAuth() {
+    console.log('Initializing authentication UI');
     const usernameInput = document.getElementById('username-input');
     
     if (!usernameInput) {
-        console.warn('Username input not found. Authentication UI cannot be initialized.');
+        console.error('Username input not found. Authentication UI cannot be initialized.');
         return;
     }
     
-    // Create and add login button
-    loginButton = document.createElement('button');
-    loginButton.id = 'ms-login-button';
-    loginButton.textContent = 'Login with Microsoft';
-    loginButton.className = 'ms-login-btn';
-    
-    // Add button next to username input
-    usernameInput.parentNode.insertBefore(loginButton, usernameInput.nextSibling);
-    
-    // Add Microsoft login button styles if they don't already exist
-    if (!document.getElementById('ms-login-styles')) {
-        const styleElement = document.createElement('style');
-        styleElement.id = 'ms-login-styles';
-        styleElement.textContent = `
-            .ms-login-btn {
-                font-family: 'Poppins', sans-serif;
-                line-height: 1;
-                text-shadow: 4px 4px 8px rgba(0, 0, 0, 0.2);
-                padding: 0.8rem 1.2rem;
-                border-radius: 8px;
-                opacity: 0.9;
-                outline: none;
-                transition: all var(--transition-speed);
-                border: none;
-                background: var(--primary-color);
-                color: var(--text-color);
-                width: 100%;
-                max-width: 200px;
-                cursor: pointer;
-            }
+    // Create and add login button if it doesn't exist
+    loginButton = document.getElementById('ms-login-btn');
+    if (!loginButton) {
+        loginButton = document.createElement('button');
+        loginButton.id = 'ms-login-btn';
+        loginButton.className = 'ms-login-btn';
+        loginButton.textContent = 'Login with Microsoft';
+        
+        // Add to the username container
+        const container = usernameInput.parentElement;
+        if (container) {
+            container.appendChild(loginButton);
             
-            .ms-login-btn:hover {
-                background-color: #0E6B0E;
-                transform: translateY(-2px);
-                box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
-            }
+            // Also add a logout hint element
+            const logoutHint = document.createElement('div');
+            logoutHint.className = 'username-logout-hint';
+            logoutHint.textContent = 'Click to log out';
+            container.appendChild(logoutHint);
             
-            .ms-login-btn:disabled {
-                opacity: 0.7;
-                cursor: wait;
-                transform: none;
-                box-shadow: none;
-            }
-        `;
-        document.head.appendChild(styleElement);
+            console.log('Added login button and logout hint to username container');
+        } else {
+            console.error('Username container not found');
+        }
     }
     
     // Add login button click handler
-    loginButton.addEventListener('click', async () => {
+    loginButton.addEventListener('click', async function() {
         try {
+            console.log('Login button clicked');
             loginButton.disabled = true;
             loginButton.textContent = 'Logging in...';
             
-            // Show a loading indicator
-            usernameInput.placeholder = 'Authenticating...';
-            
+            console.log('Microsoft login clicked, sending auth request...');
             const profile = await window.minecraft.auth.login();
             
-            if (profile && !profile.error) {
-                updateUIForLoggedInUser(profile);
-                showNotification(`Successfully logged in as ${profile.name}`);
-            } else {
-                const errorMsg = profile?.error || 'Authentication failed';
-                window.minecraft.logger.error(`Login failed: ${errorMsg}`);
-                showError(`Login failed: ${errorMsg}`);
-                
-                loginButton.disabled = false;
-                loginButton.textContent = 'Login with Microsoft';
-                usernameInput.placeholder = 'Enter username...';
+            if (profile.error) {
+                throw new Error(profile.error);
             }
-        } catch (error) {
-            window.minecraft.logger.error('Login error:', error);
-            showError(`Login error: ${error.message}`);
             
+            console.log(`Successfully logged in as ${profile.name}`);
+            updateUIForLoggedInUser(profile);
+        } catch (error) {
+            console.error('Login failed:', error);
+            alert(`Login failed: ${error.message}`);
+            
+            // Reset button state
             loginButton.disabled = false;
             loginButton.textContent = 'Login with Microsoft';
-            usernameInput.placeholder = 'Enter username...';
         }
     });
     
-    // Update: Add Ctrl+Shift+click handler for username (to logout)
-    usernameInput.addEventListener('click', async (event) => {
-        // Changed from just ctrlKey to requiring both ctrl and shift
-        if (isAuthenticated && event.ctrlKey && event.shiftKey) {
-            const confirmLogout = confirm('Do you want to log out from your Microsoft account?');
-            if (confirmLogout) {
+    // Create a direct logout button for testing/debugging
+    const debugLogoutBtn = document.createElement('button');
+    debugLogoutBtn.id = 'debug-logout-btn';
+    debugLogoutBtn.textContent = 'Force Logout';
+    debugLogoutBtn.style.position = 'fixed';
+    debugLogoutBtn.style.bottom = '10px';
+    debugLogoutBtn.style.right = '10px';
+    debugLogoutBtn.style.zIndex = '9999';
+    debugLogoutBtn.style.padding = '5px';
+    debugLogoutBtn.style.backgroundColor = '#f44336';
+    debugLogoutBtn.style.color = 'white';
+    debugLogoutBtn.style.border = 'none';
+    debugLogoutBtn.style.borderRadius = '4px';
+    debugLogoutBtn.style.cursor = 'pointer';
+    debugLogoutBtn.style.display = 'none'; // Hidden by default
+    
+    document.body.appendChild(debugLogoutBtn);
+    
+    // Add debug logout button click handler
+    debugLogoutBtn.addEventListener('click', async function() {
+        try {
+            console.log('Debug logout button clicked');
+            debugLogoutBtn.disabled = true;
+            debugLogoutBtn.textContent = 'Logging out...';
+            
+            const result = await window.minecraft.auth.logout();
+            console.log('Logout result:', result);
+            
+            updateUIForLoggedOutUser();
+            alert('You have been logged out (debug mode)');
+            
+            debugLogoutBtn.disabled = false;
+            debugLogoutBtn.textContent = 'Force Logout';
+        } catch (error) {
+            console.error('Debug logout failed:', error);
+            alert(`Logout failed: ${error.message}`);
+            
+            debugLogoutBtn.disabled = false;
+            debugLogoutBtn.textContent = 'Force Logout';
+        }
+    });
+    
+    // Make debug button visible with Ctrl+Alt+Shift+D
+    document.addEventListener('keydown', function(e) {
+        if (e.ctrlKey && e.altKey && e.shiftKey && e.key.toLowerCase() === 'd') {
+            debugLogoutBtn.style.display = debugLogoutBtn.style.display === 'none' ? 'block' : 'none';
+            console.log('Debug logout button toggled:', debugLogoutBtn.style.display);
+        }
+    });
+    
+    // Global key state tracking with better debugging
+    document.addEventListener('keydown', function(e) {
+        if ((e.ctrlKey || e.metaKey) && e.shiftKey) {
+            if (!ctrlShiftPressed) {
+                console.log('Ctrl+Shift pressed');
+                ctrlShiftPressed = true;
+            }
+            
+            // Only show hover effect if authenticated
+            if (isAuthenticated && usernameInput) {
+                usernameInput.classList.add('ctrl-shift-hover');
+                console.log('Added ctrl-shift-hover class to username input');
+            }
+        }
+    });
+    
+    document.addEventListener('keyup', function(e) {
+        // If either Ctrl/Cmd or Shift is released
+        if (!(e.ctrlKey || e.metaKey) || !e.shiftKey) {
+            if (ctrlShiftPressed) {
+                console.log('Ctrl+Shift released');
+                ctrlShiftPressed = false;
+            }
+            
+            if (usernameInput) {
+                usernameInput.classList.remove('ctrl-shift-hover');
+                console.log('Removed ctrl-shift-hover class from username input');
+            }
+        }
+    });
+    
+    // Clear the state when window loses focus
+    window.addEventListener('blur', function() {
+        if (ctrlShiftPressed) {
+            console.log('Window lost focus, clearing Ctrl+Shift state');
+            ctrlShiftPressed = false;
+            
+            if (usernameInput) {
+                usernameInput.classList.remove('ctrl-shift-hover');
+                console.log('Removed ctrl-shift-hover class from username input');
+            }
+        }
+    });
+    
+    // COMPLETELY NEW APPROACH: Use mousedown instead of click for more reliable detection
+    usernameInput.addEventListener('mousedown', async function(e) {
+        console.log('Username mousedown detected');
+        console.log('Ctrl+Shift pressed:', ctrlShiftPressed);
+        console.log('Authenticated:', isAuthenticated);
+        
+        // Only proceed if user is authenticated and Ctrl+Shift is pressed
+        if (isAuthenticated && ctrlShiftPressed) {
+            e.preventDefault(); // Prevent focus
+            console.log('Ctrl+Shift+Click detected on username, attempting logout');
+            
+            // Add visual feedback immediately
+            this.style.backgroundColor = 'rgba(255, 0, 0, 0.3)';
+            
+            // Use a confirm dialog to prevent accidental logout
+            if (confirm('Are you sure you want to log out from your Microsoft account?')) {
                 try {
-                    const success = await logout();
-                    if (success) {
-                        alert('Successfully logged out');
+                    this.style.backgroundColor = 'rgba(255, 150, 150, 0.5)';
+                    console.log('Sending logout request...');
+                    
+                    // DIRECT API CALL with detailed logging
+                    const response = await fetch('http://localhost:3000/api/logout', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' }
+                    }).catch(err => {
+                        console.log('Fetch API error:', err);
+                        return null;
+                    });
+                    
+                    console.log('Fetch response:', response);
+                    
+                    // Then try the built-in logout function
+                    console.log('Calling window.minecraft.auth.logout()');
+                    const result = await window.minecraft.auth.logout();
+                    console.log('Logout result:', result);
+                    
+                    if (result === true) {
+                        console.log('Logout successful, updating UI');
+                        // Remove the ctrl-shift-hover class
+                        this.classList.remove('ctrl-shift-hover');
+                        // Clear custom styles
+                        this.style.backgroundColor = '';
+                        // Update UI
+                        updateUIForLoggedOutUser();
+                        // Show success message
+                        alert('You have been successfully logged out.');
+                    } else {
+                        console.error('Logout returned false or unexpected value:', result);
+                        throw new Error('Logout operation did not complete successfully');
                     }
                 } catch (error) {
                     console.error('Logout error:', error);
-                    alert(`Logout failed: ${error.message}`);
+                    console.error('Error stack:', error.stack);
+                    
+                    // Clear custom styles
+                    this.style.backgroundColor = '';
+                    alert(`Logout failed: ${error.message}. Check console for details.`);
+                    
+                    // Force logout UI as last resort
+                    const forceLogout = confirm('Logout API failed. Would you like to force logout locally?');
+                    if (forceLogout) {
+                        console.log('Forcing local logout state');
+                        updateUIForLoggedOutUser();
+                    }
                 }
+            } else {
+                // Clear custom styles if logout was cancelled
+                this.style.backgroundColor = '';
+                console.log('Logout cancelled by user');
             }
         }
     });
     
     // Listen for profile updates from main process
-    window.minecraft.auth.onProfileUpdate((profile) => {
-        if (profile) {
-            updateUIForLoggedInUser(profile);
-        } else {
-            updateUIForLoggedOutUser();
-        }
-    });
-    
-    // Check if user is already authenticated - show a temporary loading state
-    usernameInput.disabled = true;
-    usernameInput.placeholder = 'Checking login status...';
-    
-    try {
-        const profile = await window.minecraft.auth.getProfile();
-        if (profile) {
-            updateUIForLoggedInUser(profile);
-            window.minecraft.logger.info(`Auto-logged in as ${profile.name}`);
-        } else {
-            updateUIForLoggedOutUser();
-            // If not logged in, try loading the last used username from localStorage
-            const lastUsername = localStorage.getItem('lastUsername');
-            if (lastUsername) {
-                usernameInput.value = lastUsername;
+    if (window.minecraft.auth.onProfileUpdate) {
+        console.log('Setting up profile update listener');
+        window.minecraft.auth.onProfileUpdate((profile) => {
+            console.log('Profile update received:', profile);
+            if (profile) {
+                updateUIForLoggedInUser(profile);
+            } else {
+                updateUIForLoggedOutUser();
             }
+        });
+    } else {
+        console.error('window.minecraft.auth.onProfileUpdate is not a function');
+    }
+    
+    // Check if user is already authenticated
+    try {
+        console.log('Checking current authentication status');
+        const profile = await window.minecraft.auth.getProfile();
+        console.log('Authentication check result:', profile);
+        
+        if (profile) {
+            updateUIForLoggedInUser(profile);
+        } else {
+            updateUIForLoggedOutUser();
         }
     } catch (error) {
-        window.minecraft.logger.error('Error checking auth state:', error);
+        console.error('Failed to check authentication status:', error);
         updateUIForLoggedOutUser();
     }
 }
@@ -2501,659 +2622,130 @@ async function initializeAuth() {
 // Update UI when user is logged in
 function updateUIForLoggedInUser(profile) {
     const usernameInput = document.getElementById('username-input');
-    if (!usernameInput || !loginButton) return;
+    if (!usernameInput) {
+        console.error('Username input not found when trying to update UI for logged in user');
+        return;
+    }
     
+    console.log('Updating UI for logged-in user:', profile.name);
     isAuthenticated = true;
     
     // Update username input with Minecraft username
     usernameInput.value = profile.name;
     usernameInput.disabled = true;
     usernameInput.classList.add('username-locked');
-    // Update title text to reflect Ctrl+Shift requirement
-    usernameInput.title = 'Logged in with Microsoft account (Ctrl+Shift+click to logout)';
-    usernameInput.placeholder = '';
+    // Add a tooltip to hint at the logout feature
+    usernameInput.title = "Ctrl+Shift+Click to logout";
     
-    // Hide login button
-    loginButton.style.display = 'none';
+    // Show the debug logout button if authorized
+    const debugBtn = document.getElementById('debug-logout-btn');
+    if (debugBtn) {
+        debugBtn.dataset.allowed = 'true';
+    }
     
-    // Store username in localStorage for auto-fill if they logout
+    // Update login button to show status
+    if (loginButton) {
+        loginButton.textContent = 'Logged in';
+        loginButton.classList.add('logged-in');
+        loginButton.disabled = true;
+    }
+    
+    // Save the username to local storage
     localStorage.setItem('lastUsername', profile.name);
     
-    window.minecraft.logger.info(`Logged in as ${profile.name}`);
+    console.log(`Logged in as ${profile.name}`);
 }
 
 // Update UI when user is logged out
 function updateUIForLoggedOutUser() {
     const usernameInput = document.getElementById('username-input');
-    if (!usernameInput || !loginButton) return;
+    if (!usernameInput) {
+        console.error('Username input not found when trying to update UI for logout');
+        return;
+    }
     
+    console.log('User is logged out, updating UI');
     isAuthenticated = false;
     
-    // Reset username input
+    // Re-enable username editing
     usernameInput.disabled = false;
     usernameInput.classList.remove('username-locked');
-    usernameInput.title = '';
-    usernameInput.placeholder = 'Enter username...';
+    usernameInput.classList.remove('ctrl-shift-hover');
+    usernameInput.title = "";
     
-    // Show login button
-    loginButton.style.display = 'inline-block';
-    loginButton.disabled = false;
-    loginButton.textContent = 'Login with Microsoft';
+    // Hide the debug logout button
+    const debugBtn = document.getElementById('debug-logout-btn');
+    if (debugBtn) {
+        debugBtn.dataset.allowed = 'false';
+    }
     
-    window.minecraft.logger.info('Not logged in with Microsoft account');
-}
-
-// Function to handle logout
-async function logout() {
-    try {
-        loginButton.textContent = 'Logging out...';
-        loginButton.disabled = true;
-        
-        const success = await window.minecraft.auth.logout();
-        if (success) {
-            updateUIForLoggedOutUser();
-            return true;
-        } else {
-            window.minecraft.logger.error('Logout failed');
-            showError('Logout failed. Please try again.');
-            loginButton.textContent = 'Login with Microsoft';
-            loginButton.disabled = false;
-            return false;
-        }
-    } catch (error) {
-        window.minecraft.logger.error('Logout error:', error);
-        showError(`Logout error: ${error.message}`);
+    // Load saved username if available
+    const savedUsername = localStorage.getItem('lastUsername') || 'Player';
+    usernameInput.value = savedUsername;
+    
+    // Reset or recreate login button
+    if (!loginButton || !document.body.contains(loginButton)) {
+        console.log('Login button not found in DOM, creating a new one');
+        // If the button doesn't exist or isn't in the DOM, create it
+        loginButton = document.createElement('button');
+        loginButton.id = 'ms-login-btn';
+        loginButton.className = 'ms-login-btn';
         loginButton.textContent = 'Login with Microsoft';
-        loginButton.disabled = false;
-        return false;
-    }
-}
-
-// Helper function to show notifications if they exist
-function showNotification(message) {
-    if (typeof window.showNotification === 'function') {
-        window.showNotification(message);
+        
+        // Add to the username container
+        const container = usernameInput.parentElement;
+        if (container) {
+            container.appendChild(loginButton);
+            console.log('Added login button to username container');
+        } else {
+            // If no parent container, insert after the username input
+            usernameInput.insertAdjacentElement('afterend', loginButton);
+            console.log('Added login button after username input');
+        }
+        
+        // Add click event listener
+        loginButton.addEventListener('click', async function() {
+            try {
+                loginButton.disabled = true;
+                loginButton.textContent = 'Logging in...';
+                
+                console.log('Microsoft login clicked, sending auth request...');
+                const profile = await window.minecraft.auth.login();
+                
+                if (profile.error) {
+                    throw new Error(profile.error);
+                }
+                
+                console.log(`Successfully logged in as ${profile.name}`);
+                updateUIForLoggedInUser(profile);
+            } catch (error) {
+                console.error('Login failed:', error);
+                alert(`Login failed: ${error.message}`);
+                
+                // Reset button state
+                loginButton.disabled = false;
+                loginButton.textContent = 'Login with Microsoft';
+            }
+        });
     } else {
-        alert(message);
+        console.log('Login button found in DOM, updating its state');
     }
+    
+    // Update button state
+    loginButton.textContent = 'Login with Microsoft';
+    loginButton.classList.remove('logged-in');
+    loginButton.disabled = false;
+    loginButton.style.display = 'block'; // Ensure it's visible
+    
+    console.log('User is not logged in, login button is ready');
 }
 
-function showError(message) {
-    if (typeof window.showError === 'function') {
-        window.showError(message);
-    } else {
-        alert(`Error: ${message}`);
-    }
-}
-
-// ...existing code...
-
-document.addEventListener('DOMContentLoaded', () => {
+// Initialize auth when the window loads
+window.addEventListener('DOMContentLoaded', async () => {
     // ...existing code...
     
     // Initialize authentication UI
-    initializeAuth();
+    await initializeAuth();
     
     // ...existing code...
 });
-// ...existing code...
-
-// Replace the problematic showNotification and showError functions with fixed versions
-function showNotification(message) {
-    // Prevent recursive calls by checking if we're already inside this function
-    if (window._isShowingNotification) return;
-    
-    try {
-        window._isShowingNotification = true;
-        
-        // Log to console
-        console.log(`Notification: ${message}`);
-        
-        // If the launcher has a built-in notification system
-        if (typeof window._showNotification === 'function') {
-            window._showNotification(message);
-        } else {
-            // Fallback to a simple alert if no notification system exists
-            alert(message);
-        }
-    } catch (err) {
-        console.error('Error showing notification:', err);
-    } finally {
-        window._isShowingNotification = false;
-    }
-}
-
-function showError(message) {
-    // Prevent recursive calls by checking if we're already inside this function
-    if (window._isShowingError) return;
-    
-    try {
-        window._isShowingError = true;
-        
-        // Always log to console first
-        console.error(`Error: ${message}`);
-        
-        // Log using the minecraft logger if available
-        if (window.minecraft?.logger) {
-            window.minecraft.logger.error(message);
-        }
-        
-        // If the launcher has a built-in error notification system
-        if (typeof window._showError === 'function') {
-            window._showError(message);
-        } else {
-            // Fallback to a simple alert if no error system exists
-            alert(`Error: ${message}`);
-        }
-    } catch (err) {
-        console.error('Error in showError function:', err);
-    } finally {
-        window._isShowingError = false;
-    }
-}
-
-// Store original notification functions if they exist
-window._showNotification = window.showNotification;
-window._showError = window.showError;
-
-// Override the global notification functions
-window.showNotification = showNotification;
-window.showError = showError;
-
-// ...existing code...
-
-// Update the login button click handler to properly handle errors
-async function initializeAuth() {
-    const usernameInput = document.getElementById('username-input');
-    
-    if (!usernameInput) {
-        console.warn('Username input not found. Authentication UI cannot be initialized.');
-        return;
-    }
-    
-    // Create and add login button
-    loginButton = document.createElement('button');
-    loginButton.id = 'ms-login-button';
-    loginButton.textContent = 'Login with Microsoft';
-    loginButton.className = 'ms-login-btn';
-    
-    // Add button next to username input
-    usernameInput.parentNode.insertBefore(loginButton, usernameInput.nextSibling);
-    
-    // Add Microsoft login button styles if they don't already exist
-    // ...existing code...
-    
-    // Add login button click handler
-    loginButton.addEventListener('click', async () => {
-        try {
-            loginButton.disabled = true;
-            loginButton.textContent = 'Logging in...';
-            
-            // Show a loading indicator
-            usernameInput.placeholder = 'Authenticating...';
-            
-            console.log('Starting Microsoft authentication...');
-            const profile = await window.minecraft.auth.login();
-            
-            if (profile && !profile.error) {
-                updateUIForLoggedInUser(profile);
-                showNotification(`Successfully logged in as ${profile.name}`);
-            } else {
-                const errorMsg = profile?.error || 'Authentication failed';
-                console.error(`Login failed: ${errorMsg}`);
-                if (window.minecraft?.logger) {
-                    window.minecraft.logger.error(`Login failed: ${errorMsg}`);
-                }
-                
-                // Use alert instead of showError to avoid potential recursion issues
-                alert(`Login failed: ${errorMsg}`);
-                
-                loginButton.disabled = false;
-                loginButton.textContent = 'Login with Microsoft';
-                usernameInput.placeholder = 'Enter username...';
-            }
-        } catch (error) {
-            console.error('Login error:', error);
-            if (window.minecraft?.logger) {
-                window.minecraft.logger.error(`Login error: ${error.message}`);
-            }
-            
-            // Use alert instead of showError to avoid potential recursion
-            alert(`Login error: ${error.message}`);
-            
-            loginButton.disabled = false;
-            loginButton.textContent = 'Login with Microsoft';
-            usernameInput.placeholder = 'Enter username...';
-        }
-    });
-    
-    // Update: Add Ctrl+Shift+click handler for username (to logout)
-    usernameInput.addEventListener('click', async (event) => {
-        // Changed from just ctrlKey to requiring both ctrl and shift
-        if (isAuthenticated && event.ctrlKey && event.shiftKey) {
-            const confirmLogout = confirm('Do you want to log out from your Microsoft account?');
-            if (confirmLogout) {
-                try {
-                    const success = await logout();
-                    if (success) {
-                        alert('Successfully logged out');
-                    }
-                } catch (error) {
-                    console.error('Logout error:', error);
-                    alert(`Logout failed: ${error.message}`);
-                }
-            }
-        }
-    });
-    
-    // ...existing code...
-}
-
-// Update the logout function to use the safer error handling
-async function logout() {
-    try {
-        if (!loginButton) return false;
-        
-        loginButton.textContent = 'Logging out...';
-        loginButton.disabled = true;
-        
-        const success = await window.minecraft.auth.logout();
-        if (success) {
-            updateUIForLoggedInUser(null);
-            return true;
-        } else {
-            console.error('Logout failed');
-            if (window.minecraft?.logger) {
-                window.minecraft.logger.error('Logout failed');
-            }
-            
-            // Use alert instead of showError
-            alert('Logout failed. Please try again.');
-            
-            if (loginButton) {
-                loginButton.textContent = 'Login with Microsoft';
-                loginButton.disabled = false;
-            }
-            return false;
-        }
-    } catch (error) {
-        console.error('Logout error:', error);
-        if (window.minecraft?.logger) {
-            window.minecraft.logger.error(`Logout error: ${error.message}`);
-        }
-        
-        // Use alert instead of showError
-        alert(`Logout error: ${error.message}`);
-        
-        if (loginButton) {
-            loginButton.textContent = 'Login with Microsoft';
-            loginButton.disabled = false;
-        }
-        return false;
-    }
-}
-
-// Make the updateUIForLoggedInUser function more robust by adding null checks
-function updateUIForLoggedInUser(profile) {
-    const usernameInput = document.getElementById('username-input');
-    if (!usernameInput) {
-        console.warn('Username input not found, cannot update UI');
-        return;
-    }
-    
-    if (!loginButton) {
-        console.warn('Login button not found, cannot update UI');
-        return;
-    }
-    
-    if (profile) {
-        // User is logged in
-        isAuthenticated = true;
-        
-        // Update username input with Minecraft username
-        usernameInput.value = profile.name;
-        usernameInput.disabled = true;
-        usernameInput.classList.add('username-locked');
-        // Update title text to reflect Ctrl+Shift requirement
-        usernameInput.title = 'Logged in with Microsoft account (Ctrl+Shift+click to logout)';
-        usernameInput.placeholder = '';
-        
-        // Hide login button if it exists
-        if (loginButton) {
-            loginButton.style.display = 'none';
-        }
-        
-        // Store username in localStorage for auto-fill if they logout
-        localStorage.setItem('lastUsername', profile.name);
-        
-        console.log(`Logged in as ${profile.name}`);
-        if (window.minecraft?.logger) {
-            window.minecraft.logger.info(`Logged in as ${profile.name}`);
-        }
-    } else {
-        // User is logged out
-        updateUIForLoggedOutUser();
-    }
-}
-
-// ...existing code...
-
-function updateUIForLoggedInUser(profile) {
-    const usernameInput = document.getElementById('username-input');
-    if (!usernameInput) {
-        console.warn('Username input not found, cannot update UI');
-        return;
-    }
-    
-    // Ensure loginButton is defined
-    if (!loginButton) {
-        loginButton = document.getElementById('ms-login-button');
-        if (!loginButton) {
-            console.warn('Login button not found, cannot update UI');
-        }
-    }
-    
-    if (!profile) {
-        updateUIForLoggedOutUser();
-        return;
-    }
-    
-    try {
-        console.log(`Updating UI for logged-in user: ${profile.name}`);
-        if (window.minecraft?.logger) {
-            window.minecraft.logger.info(`Updating UI for logged-in user: ${profile.name}`);
-        }
-        
-        isAuthenticated = true;
-        
-        // Update username input with Minecraft username
-        usernameInput.value = profile.name;
-        usernameInput.disabled = true;
-        usernameInput.classList.add('username-locked');
-        // Update title text to reflect Ctrl+Shift requirement
-        usernameInput.title = 'Logged in with Microsoft account (Ctrl+Shift+click to logout)';
-        usernameInput.placeholder = '';
-        
-        // Hide login button if it exists
-        if (loginButton) {
-            loginButton.style.display = 'none';
-        }
-        
-        // Store username in localStorage for auto-fill if they logout
-        localStorage.setItem('lastUsername', profile.name);
-        
-        console.log(`Logged in as ${profile.name}`);
-        if (window.minecraft?.logger) {
-            window.minecraft.logger.info(`Logged in as ${profile.name}`);
-        }
-    } catch (error) {
-        console.error('Error updating UI for logged-in user:', error);
-        if (window.minecraft?.logger) {
-            window.minecraft.logger.error(`Error updating UI for logged-in user: ${error.message}`);
-        }
-    }
-}
-
-// Update UI when user is logged out
-function updateUIForLoggedOutUser() {
-    const usernameInput = document.getElementById('username-input');
-    if (!usernameInput) {
-        console.warn('Username input not found, cannot update UI');
-        return;
-    }
-    
-    // Ensure loginButton is defined
-    if (!loginButton) {
-        loginButton = document.getElementById('ms-login-button');
-        if (!loginButton) {
-            console.warn('Login button not found, creating it');
-            createLoginButton(usernameInput);
-        }
-    }
-    
-    try {
-        console.log('Updating UI for logged-out user');
-        if (window.minecraft?.logger) {
-            window.minecraft.logger.info('Updating UI for logged-out user');
-        }
-        
-        isAuthenticated = false;
-        
-        // Reset username input
-        usernameInput.disabled = false;
-        usernameInput.classList.remove('username-locked');
-        usernameInput.title = '';
-        usernameInput.placeholder = 'Enter username...';
-        
-        // Show login button if it exists
-        if (loginButton) {
-            loginButton.style.display = 'inline-block';
-            loginButton.disabled = false;
-            loginButton.textContent = 'Login with Microsoft';
-        }
-    } catch (error) {
-        console.error('Error updating UI for logged-out user:', error);
-        if (window.minecraft?.logger) {
-            window.minecraft.logger.error(`Error updating UI for logged-out user: ${error.message}`);
-        }
-    }
-}
-
-// Create login button if it doesn't exist
-function createLoginButton(usernameInput) {
-    if (!usernameInput) return null;
-    
-    try {
-        loginButton = document.createElement('button');
-        loginButton.id = 'ms-login-button';
-        loginButton.textContent = 'Login with Microsoft';
-        loginButton.className = 'ms-login-btn';
-        
-        // Add button next to username input
-        usernameInput.parentNode.insertBefore(loginButton, usernameInput.nextSibling);
-        
-        // Add click handler
-        loginButton.addEventListener('click', handleLoginButtonClick);
-        
-        return loginButton;
-    } catch (error) {
-        console.error('Error creating login button:', error);
-        return null;
-    }
-}
-
-// Separate function for login button click to avoid duplication
-async function handleLoginButtonClick() {
-    try {
-        if (!loginButton) return;
-        
-        loginButton.disabled = true;
-        loginButton.textContent = 'Logging in...';
-        
-        const usernameInput = document.getElementById('username-input');
-        if (usernameInput) {
-            usernameInput.placeholder = 'Authenticating...';
-        }
-        
-        console.log('Starting Microsoft authentication...');
-        const profile = await window.minecraft.auth.login();
-        
-        if (profile && !profile.error) {
-            updateUIForLoggedInUser(profile);
-            alert(`Successfully logged in as ${profile.name}`);
-        } else {
-            const errorMsg = profile?.error || 'Authentication failed';
-            console.error(`Login failed: ${errorMsg}`);
-            if (window.minecraft?.logger) {
-                window.minecraft.logger.error(`Login failed: ${errorMsg}`);
-            }
-            
-            alert(`Login failed: ${errorMsg}`);
-            
-            if (loginButton) {
-                loginButton.disabled = false;
-                loginButton.textContent = 'Login with Microsoft';
-            }
-            
-            if (usernameInput) {
-                usernameInput.placeholder = 'Enter username...';
-            }
-        }
-    } catch (error) {
-        console.error('Login error:', error);
-        if (window.minecraft?.logger) {
-            window.minecraft.logger.error(`Login error: ${error.message}`);
-        }
-        
-        alert(`Login error: ${error.message}`);
-        
-        if (loginButton) {
-            loginButton.disabled = false;
-            loginButton.textContent = 'Login with Microsoft';
-        }
-        
-        const usernameInput = document.getElementById('username-input');
-        if (usernameInput) {
-            usernameInput.placeholder = 'Enter username...';
-        }
-    }
-}
-
-// Function to initialize authentication UI - completely rewritten for better reliability
-async function initializeAuth() {
-    try {
-        console.log('Initializing authentication UI...');
-        if (window.minecraft?.logger) {
-            window.minecraft.logger.info('Initializing authentication UI...');
-        }
-        
-        const usernameInput = document.getElementById('username-input');
-        if (!usernameInput) {
-            console.warn('Username input not found. Authentication UI cannot be initialized.');
-            return;
-        }
-        
-        // Add Microsoft login button styles if they don't already exist
-        if (!document.getElementById('ms-login-styles')) {
-            const styleElement = document.createElement('style');
-            styleElement.id = 'ms-login-styles';
-            styleElement.textContent = `
-                .ms-login-btn {
-                    font-family: 'Poppins', sans-serif;
-                    line-height: 1;
-                    text-shadow: 4px 4px 8px rgba(0, 0, 0, 0.2);
-                    padding: 0.8rem 1.2rem;
-                    border-radius: 8px;
-                    opacity: 0.9;
-                    outline: none;
-                    transition: all var(--transition-speed);
-                    border: none;
-                    background: var(--primary-color);
-                    color: var(--text-color);
-                    width: 100%;
-                    max-width: 200px;
-                    cursor: pointer;
-                }
-                
-                .ms-login-btn:hover {
-                    background-color: #0E6B0E;
-                    transform: translateY(-2px);
-                    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
-                }
-                
-                .ms-login-btn:disabled {
-                    opacity: 0.7;
-                    cursor: wait;
-                    transform: none;
-                    box-shadow: none;
-                }
-            `;
-            document.head.appendChild(styleElement);
-        }
-        
-        // Create login button if it doesn't exist
-        if (!loginButton) {
-            loginButton = createLoginButton(usernameInput);
-        }
-        
-        // Update: Add Ctrl+Shift+click handler for username (to logout)
-        usernameInput.addEventListener('click', async (event) => {
-            // Changed from just ctrlKey to requiring both ctrl and shift
-            if (isAuthenticated && event.ctrlKey && event.shiftKey) {
-                const confirmLogout = confirm('Do you want to log out from your Microsoft account?');
-                if (confirmLogout) {
-                    try {
-                        const success = await logout();
-                        if (success) {
-                            alert('Successfully logged out');
-                        }
-                    } catch (error) {
-                        console.error('Logout error:', error);
-                        alert(`Logout failed: ${error.message}`);
-                    }
-                }
-            }
-        });
-        
-        // Listen for profile updates from main process
-        if (window.minecraft?.auth?.onProfileUpdate) {
-            window.minecraft.auth.onProfileUpdate((profile) => {
-                console.log('Received profile update:', profile);
-                if (profile) {
-                    updateUIForLoggedInUser(profile);
-                } else {
-                    updateUIForLoggedOutUser();
-                }
-            });
-        }
-        
-        // Check if user is already authenticated - show a temporary loading state
-        usernameInput.disabled = true;
-        usernameInput.placeholder = 'Checking login status...';
-        
-        try {
-            console.log('Checking existing authentication...');
-            if (window.minecraft?.logger) {
-                window.minecraft.logger.info('Checking existing authentication...');
-            }
-            
-            // Get the profile from the auth service
-            const profile = await window.minecraft.auth.getProfile();
-            
-            if (profile) {
-                console.log('Found existing profile:', profile);
-                if (window.minecraft?.logger) {
-                    window.minecraft.logger.info(`Auto-logged in as ${profile.name}`);
-                }
-                updateUIForLoggedInUser(profile);
-            } else {
-                console.log('No existing authentication found');
-                if (window.minecraft?.logger) {
-                    window.minecraft.logger.info('No existing authentication found');
-                }
-                updateUIForLoggedOutUser();
-                
-                // If not logged in, try loading the last used username from localStorage
-                const lastUsername = localStorage.getItem('lastUsername');
-                if (lastUsername) {
-                    usernameInput.value = lastUsername;
-                }
-            }
-        } catch (error) {
-            console.error('Error checking auth state:', error);
-            if (window.minecraft?.logger) {
-                window.minecraft.logger.error(`Error checking auth state: ${error.message}`);
-            }
-            updateUIForLoggedOutUser();
-        }
-    } catch (error) {
-        console.error('Failed to initialize auth UI:', error);
-        if (window.minecraft?.logger) {
-            window.minecraft.logger.error(`Failed to initialize auth UI: ${error.message}`);
-        }
-    }
-}
-
-// ...existing code...
-
-

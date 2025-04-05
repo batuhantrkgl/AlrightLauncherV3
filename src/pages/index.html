@@ -6,6 +6,7 @@
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://login.microsoftonline.com https://secure.aadcdn.microsoftonline-p.com; connect-src 'self' https://piston-meta.mojang.com https://launchermeta.mojang.com https://resources.download.minecraft.net https://libraries.minecraft.net;">
     <title>AlrightLauncher</title>
     <link rel="stylesheet" href="../styles/styles.css">
+    <link rel="stylesheet" href="../styles/auth.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700&family=Poppins:wght@400;600;700&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="../styles/updates.css">
     <style>
@@ -401,6 +402,9 @@
         </div>
     </div>
 
+    <!-- Add the auth helper script before renderer.js -->
+    <script src="../scripts/auth-helper.js"></script>
+    <script src="../scripts/direct-logout.js"></script>
     <script src="../scripts/renderer.js"></script>
 </body>
 </html>

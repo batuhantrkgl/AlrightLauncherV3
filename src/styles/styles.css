@@ -1651,6 +1651,7 @@ body, .left-panel, .right-panel, .play-button, .version-dropdown,
     align-items: center;
     gap: 10px;
     flex-wrap: wrap;
+    position: relative;
 }
 
 #username-input {
@@ -1667,7 +1668,6 @@ body, .left-panel, .right-panel, .play-button, .version-dropdown,
     border: none;
     color: var(--text-color);
     width: 100%;
-    max-width: 200px;
 }
 
 #username-input:hover {
@@ -1689,6 +1689,31 @@ body, .left-panel, .right-panel, .play-button, .version-dropdown,
     cursor: not-allowed;
     border: 1px solid rgba(0, 128, 0, 0.3);
     box-shadow: 0 0 5px rgba(0, 128, 0, 0.2);
+}
+
+/* Add a special hover style for when Ctrl+Shift is held */
+#username-input.ctrl-shift-hover {
+    background-color: rgba(255, 0, 0, 0.1) !important;
+    border: 1px dashed rgba(255, 0, 0, 0.5) !important;
+    box-shadow: 0 0 8px rgba(255, 0, 0, 0.3) !important;
+    cursor: pointer !important;
+    color: var(--primary-color) !important;
+}
+
+/* Show a tooltip-like hint when hovering with Ctrl+Shift */
+#username-input.ctrl-shift-hover::after {
+    content: "Click to logout";
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--panel-bg);
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 0.8rem;
+    white-space: nowrap;
+    z-index: 100;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
 }
 
 .ms-login-btn {
@@ -1730,4 +1755,48 @@ body, .left-panel, .right-panel, .play-button, .version-dropdown,
 .ms-login-btn:disabled {
     background-color: #3a8c3a;
     cursor: wait;
+}
+
+/* Add these styles for the username logout functionality */
+.username-locked {
+    background-color: rgba(0, 100, 255, 0.1);
+    border: 1px solid rgba(0, 100, 255, 0.5);
+    cursor: default;
+}
+
+.ctrl-shift-hover {
+    background-color: rgba(255, 50, 50, 0.2) !important;
+    border-color: rgba(255, 50, 50, 0.6) !important;
+    cursor: pointer !important;
+    animation: pulse 1s infinite alternate;
+}
+
+@keyframes pulse {
+    from { box-shadow: 0 0 0 rgba(255, 50, 50, 0.4); }
+    to { box-shadow: 0 0 5px rgba(255, 50, 50, 0.7); }
+}
+
+.username-logout-hint {
+    display: none;
+    position: absolute;
+    top: 100%;
+    left: 0;
+    background-color: #f44336;
+    color: white;
+    padding: 5px 10px;
+    border-radius: 4px;
+    font-size: 0.8em;
+    margin-top: 5px;
+    white-space: nowrap;
+    pointer-events: none;
+    z-index: 100;
+}
+
+.ctrl-shift-hover + .username-logout-hint {
+    display: block;
+}
+
+/* Make the username container relative for proper tooltip positioning */
+.username-container {
+    position: relative;
 }

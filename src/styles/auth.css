@@ -1,0 +1,104 @@
+/* Styles for authentication UI components */
+
+/* Username input styling */
+#username-input.username-locked {
+    background-color: rgba(0, 100, 255, 0.1);
+    border: 1px solid rgba(0, 100, 255, 0.5);
+    cursor: default;
+    font-weight: bold;
+    color: #3a93ff;
+    transition: all 0.2s ease;
+}
+
+/* Hover effect when Ctrl+Shift is pressed */
+#username-input.ctrl-shift-hover {
+    background-color: rgba(255, 50, 50, 0.2) !important;
+    border-color: rgba(255, 50, 50, 0.6) !important;
+    cursor: pointer !important;
+    animation: pulse 1s infinite alternate;
+    box-shadow: 0 0 8px rgba(255, 50, 50, 0.5);
+}
+
+@keyframes pulse {
+    from { box-shadow: 0 0 4px rgba(255, 50, 50, 0.4); }
+    to { box-shadow: 0 0 12px rgba(255, 50, 50, 0.7); }
+}
+
+.logout-button {
+    display: none; /* Hide the button by default */
+    font-family: 'Poppins', sans-serif;
+    line-height: 1;
+    text-shadow: 4px 4px 8px rgba(0, 0, 0, 0.2);
+    padding: 0.8rem 1.2rem;
+    border-radius: 8px;
+    opacity: 0.9;
+    outline: none;
+    transition: all var(--transition-speed);
+    border: none;
+    background: var(--primary-color);
+    color: var(--text-color);
+    width: 100%;
+    cursor: pointer;
+    margin-top: 10px;
+}
+
+.logout-button:hover {
+    background-color: #d32f2f;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(-10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+/* Make the username container relative for proper button positioning */
+.username-container {
+    position: relative;
+}
+
+/* Microsoft login button styling */
+.ms-login-btn {
+    background-color: #0078d7;
+    color: white;
+    border: none;
+    padding: 8px 16px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: bold;
+    margin-top: 10px;
+    transition: background-color 0.2s;
+}
+
+.ms-login-btn:hover {
+    background-color: #106ebe;
+}
+
+.ms-login-btn:disabled {
+    background-color: #ccc;
+    cursor: not-allowed;
+}
+
+.ms-login-btn.logged-in {
+    background-color: #4caf50;
+    display: none; /* Hide button when logged in */
+}
+
+/* Emergency logout button */
+#emergency-logout {
+    position: fixed;
+    bottom: 10px;
+    right: 10px;
+    background-color: #f44336;
+    color: white;
+    border: none;
+    padding: 5px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    z-index: 9999;
+    opacity: 0.9;
+    display: none;
+}
+
+#emergency-logout:hover {
+    opacity: 1;
+}
