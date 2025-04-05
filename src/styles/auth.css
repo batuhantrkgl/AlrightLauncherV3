@@ -19,6 +19,15 @@
     box-shadow: 0 0 8px rgba(255, 50, 50, 0.5);
 }
 
+/* Also apply hover effect to donation message when Ctrl+Shift is pressed */
+#donation-message.ctrl-shift-hover {
+    background-color: rgba(255, 50, 50, 0.2) !important;
+    border-color: rgba(255, 50, 50, 0.6) !important;
+    cursor: pointer !important;
+    animation: pulse 1s infinite alternate;
+    box-shadow: 0 0 8px rgba(255, 50, 50, 0.5);
+}
+
 @keyframes pulse {
     from { box-shadow: 0 0 4px rgba(255, 50, 50, 0.4); }
     to { box-shadow: 0 0 12px rgba(255, 50, 50, 0.7); }

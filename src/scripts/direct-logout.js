@@ -95,6 +95,8 @@
                 
                 // Find username input to check if authenticated
                 const usernameInput = document.getElementById('username-input');
+                const donationMessage = document.getElementById('donation-message');
+                
                 if (usernameInput && usernameInput.disabled) {
                     // User is likely authenticated if the input is disabled
                     console.log('Ctrl+Shift pressed, user appears to be authenticated');
@@ -102,6 +104,11 @@
                     // Show logout button
                     if (logoutButton) {
                         logoutButton.style.display = 'block';
+                    }
+                    
+                    // Add hover effect to donation message too
+                    if (donationMessage) {
+                        donationMessage.classList.add('ctrl-shift-hover');
                     }
                     
                     // Create logout button if it doesn't exist yet
@@ -117,6 +124,12 @@
                 // Hide logout button
                 if (logoutButton) {
                     logoutButton.style.display = 'none';
+                }
+                
+                // Remove hover effect from donation message
+                const donationMessage = document.getElementById('donation-message');
+                if (donationMessage) {
+                    donationMessage.classList.remove('ctrl-shift-hover');
                 }
             }
         });

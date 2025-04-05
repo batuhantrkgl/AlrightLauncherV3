@@ -204,6 +204,10 @@ contextBridge.exposeInMainWorld('minecraft', {
     },
     onAssetDownloadProgress: (callback) => {
         ipcRenderer.on('asset-download-progress', (event, data) => callback(data));
+    },
+    // Add system utilities
+    system: {
+        openExternal: (url) => ipcRenderer.invoke('open-external', url),
     }
 });
 

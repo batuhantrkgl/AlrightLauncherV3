@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const { exec, spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs-extra');
@@ -1011,6 +1011,26 @@ function registerIpcHandlers() {
         } catch (error) {
             logger.error('Get profile failed:', error);
             return null;
+        }
+    });
+
+    // Add handler for opening external links
+    ipcMain.handle('open-external', async (event, url) => {
+        try {
+            // Validate URL to prevent security issues
+            const validUrl = new URL(url);
+            const allowedProtocols = ['https:', 'http:'];
+            
+            if (allowedProtocols.includes(validUrl.protocol)) {
+                await shell.openExternal(url);
+                return true;
+            } else {
+                logger.warn(`Blocked attempt to open URL with disallowed protocol: ${url}`);
+                return false;
+            }
+        } catch (error) {
+            logger.error(`Error opening external URL: ${error.message}`);
+            return false;
         }
     });
 }

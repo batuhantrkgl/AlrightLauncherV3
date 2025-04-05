@@ -1799,3 +1799,84 @@ body, .left-panel, .right-panel, .play-button, .version-dropdown,
 .username-container {
     position: relative;
 }
+
+/* Donation message styling - matching username style with blue borders */
+#donation-message {
+    /* Positioning */
+    margin-top: auto;
+    margin-bottom: 10px;
+    width: calc(100% - 2.4rem);
+    text-align: center;
+    
+    /* Typography */
+    font-family: 'Poppins', sans-serif;
+    font-size: 0.8rem;
+    line-height: 1;
+    text-shadow: 4px 4px 8px rgba(0, 0, 0, 0.2);
+    
+    /* Spacing & Size */
+    padding: 0.8rem 1.2rem;
+    min-width: auto;
+    border-radius: 8px;
+    
+    /* Visual - adding blue borders and background */
+    opacity: 0.7;
+    outline: none;
+    position: relative;
+    background-color: rgba(0, 100, 255, 0.05);
+    border: 1px solid rgba(0, 100, 255, 0.3);
+    color: #3a93ff;
+    font-weight: 500;
+    
+    /* Link styling */
+    display: block;
+    text-decoration: none;
+    cursor: pointer;
+    
+    /* Animation */
+    transition: all var(--transition-speed);
+}
+
+#donation-message:hover {
+    opacity: 1;
+    background-color: rgba(0, 100, 255, 0.1);
+    border-color: rgba(0, 100, 255, 0.5);
+    backdrop-filter: blur(60px);
+    box-shadow: 0 4px 15px rgba(0, 100, 255, 0.15);
+    transform: translateY(-2px);
+}
+
+#donation-message:active {
+    transform: translateY(0);
+    transition: transform 0.1s;
+}
+
+/* Add a subtle indicator that it's clickable */
+#donation-message::after {
+    content: '→';
+    position: absolute;
+    right: 15px;
+    opacity: 0;
+    transition: opacity 0.3s, transform 0.3s;
+}
+
+#donation-message:hover::after {
+    opacity: 1;
+    transform: translateX(5px);
+}
+
+/* Add responsive styling for small screens */
+@media (max-width: 768px) {
+    #donation-message {
+        font-size: 0.7rem;
+        padding: 0.6rem 1rem;
+    }
+}
+
+/* Add responsive styling for small screens */
+@media (max-width: 768px) {
+    #donation-message {
+        font-size: 0.7rem;
+        padding: 0.6rem 1rem;
+    }
+}

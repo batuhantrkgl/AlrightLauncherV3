@@ -269,7 +269,7 @@ versionElement.addEventListener('click', async (event) => {
     filteredVersions.forEach(v => {
         const isFabric = v.id.includes('fabric') || v.type === 'fabric';
         const isForge = v.id.includes('forge') || v.type === 'forge';
-        const isQuilt = v.id.includes('quilt') || v.type === 'quilt';
+        const isQuilt = v.id.includes('quilt');
         
         if (isFabric || isForge || isQuilt) {
             moddedVersions.push(v);
@@ -2749,3 +2749,37 @@ window.addEventListener('DOMContentLoaded', async () => {
     
     // ...existing code...
 });
+
+// ...existing code...
+
+// Add event listener for external links
+document.addEventListener('DOMContentLoaded', () => {
+    // Single event handler for all external links including donation message
+    document.addEventListener('click', (event) => {
+        // Find if clicked element or any of its parents has the external-link class
+        const link = event.target.closest('.external-link');
+        
+        if (link) {
+            event.preventDefault();
+            event.stopPropagation(); // Prevent event bubbling
+            
+            // Prevent multiple triggers
+            if (link.dataset.processing) return;
+            
+            // Set a flag to prevent multiple rapid clicks
+            link.dataset.processing = "true";
+            
+            const url = link.getAttribute('href');
+            window.minecraft.system.openExternal(url);
+            
+            // Remove the processing flag after a short delay
+            setTimeout(() => {
+                delete link.dataset.processing;
+            }, 1000);
+        }
+    });
+    
+    // ...existing code...
+});
+
+// ...existing code...
