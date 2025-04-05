@@ -572,19 +572,26 @@ class MinecraftLauncher {
     args.push("--assetsDir", assetsDir);
     args.push("--assetIndex", versionJson.assetIndex.id);
     
+    // Add userProperties argument for Minecraft 1.7.2 through 1.8
+    // This is required for these specific versions
+    const versionNumber = parseFloat(version.replace(/^(\d+\.\d+).*$/, '$1')); // Extract major.minor version
+    if (versionNumber >= 1.7 && versionNumber <= 1.8) {
+        args.push("--userProperties", "{}");
+    }
+    
     if (useRealAuth) {
-      // Use real Microsoft authentication data
-      logger.info(`Using Microsoft authentication for ${username}`);
-      args.push("--uuid", authData.profile.id);
-      args.push("--accessToken", authData.accessToken);
-      args.push("--userType", "msa");  // Microsoft Account
+        // Use real Microsoft authentication data
+        logger.info(`Using Microsoft authentication for ${username}`);
+        args.push("--uuid", authData.profile.id);
+        args.push("--accessToken", authData.accessToken);
+        args.push("--userType", "msa");  // Microsoft Account
     } else {
-      // Fallback to offline mode
-      logger.info(`Using offline mode for ${username}`);
-      const uuid = this.generateUUID();
-      args.push("--uuid", uuid);
-      args.push("--accessToken", "offline");
-      args.push("--userType", "mojang");
+        // Fallback to offline mode
+        logger.info(`Using offline mode for ${username}`);
+        const uuid = this.generateUUID();
+        args.push("--uuid", uuid);
+        args.push("--accessToken", "offline");
+        args.push("--userType", "mojang");
     }
     
     args.push("--versionType", "release");

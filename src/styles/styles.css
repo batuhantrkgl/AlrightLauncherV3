@@ -310,7 +310,7 @@ body {
     align-self: flex-end;
     position: relative;
     overflow: hidden;
-    animation: pulse 2s infinite;
+    animation: pulse 200s infinite;
 }
 
 .play-button:hover {
