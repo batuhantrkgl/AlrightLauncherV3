@@ -28,9 +28,7 @@
             background: var(--panel-bg);
             border-radius: 15px;
             padding: 2rem;
-            width: 80%;
-            max-width: 600px;
-            max-height: 80vh;
+            width: 90%;
             overflow-y: auto;
         }
 
@@ -180,7 +178,6 @@
                             <input type="checkbox" id="offline-toggle">
                             <span class="slider"></span>
                         </label>
-                        <p class="setting-description">Launch games without connecting to Minecraft servers</p>
                     </div>
                     <div class="setting-item">
                         <label>Skip File Verification</label>
@@ -188,7 +185,6 @@
                             <input type="checkbox" id="skip-verification-toggle">
                             <span class="slider"></span>
                         </label>
-                        <p class="setting-description">Skip file integrity checks when launching offline (not recommended)</p>
                     </div>
                 </div>
             </div>
@@ -199,27 +195,50 @@
                 <div class="settings-section">
                     <h3>Appearance</h3>
                     <div class="setting-item">
-                        <label for="theme-selector">Theme</label>
-                        <select id="theme-selector" class="theme-selector">
-                            <option value="light">Light (Default)</option>
-                            <option value="dark">Dark</option>
-                            <option value="gold-olive">Pale Gold & Dark Olive</option>
-                            <option value="teal-ivory">Cool Teal & Ivory White</option>
-                            <option value="plum-green">Deep Plum & Soft Green</option>
-                            <option value="antique-puce">Antique White & Puce</option>
-                            <option value="beige-tan">Soft Beige & Muted Tan</option>
-                            <option value="charcoal-lilac">Deep Charcoal & Muted Lilac</option>
-                            <option value="coffee-gray">Coffee Brown & Silver Gray</option>
-                            <option value="coral-ruby">Fiery Coral & Dark Ruby</option>
-                        </select>
-                    </div>
-                    <!-- We're keeping the dark mode toggle for compatibility, but it will be hidden with CSS -->
-                    <div class="setting-item" style="display: none;">
-                        <label>Dark Mode</label>
-                        <label class="theme-switch">
-                            <input type="checkbox" id="theme-toggle">
-                            <span class="slider"></span>
-                        </label>
+                        <label>Theme</label>
+                        <div class="theme-preview-container">
+                            <div class="theme-preview" data-theme="light" title="Light (Default)">
+                                <div class="preview-color light-primary"></div>
+                                <div class="preview-color light-secondary"></div>
+                            </div>
+                            <div class="theme-preview" data-theme="dark" title="Dark">
+                                <div class="preview-color dark-primary"></div>
+                                <div class="preview-color dark-secondary"></div>
+                            </div>
+                            <div class="theme-preview" data-theme="gold-olive" title="Pale Gold & Dark Olive">
+                                <div class="preview-color gold-primary"></div>
+                                <div class="preview-color olive-secondary"></div>
+                            </div>
+                            <!-- Add more theme previews as needed -->
+                            <div class="theme-preview" data-theme="teal-ivory" title="Cool Teal & Ivory White">
+                                <div class="preview-color teal-primary"></div>
+                                <div class="preview-color ivory-secondary"></div>
+                            </div>
+                            <div class="theme-preview" data-theme="plum-green" title="Deep Plum & Soft Green">
+                                <div class="preview-color plum-primary"></div>
+                                <div class="preview-color green-secondary"></div>
+                            </div>
+                            <div class="theme-preview" data-theme="antique-puce" title="Antique White & Puce">
+                                <div class="preview-color puce-primary"></div>
+                                <div class="preview-color antique-secondary"></div>
+                            </div>
+                            <div class="theme-preview" data-theme="beige-tan" title="Soft Beige & Muted Tan">
+                                <div class="preview-color tan-primary"></div>
+                                <div class="preview-color beige-secondary"></div>
+                            </div>
+                            <div class="theme-preview" data-theme="charcoal-lilac" title="Deep Charcoal & Muted Lilac">
+                                <div class="preview-color lilac-primary"></div>
+                                <div class="preview-color charcoal-secondary"></div>
+                            </div>
+                            <div class="theme-preview" data-theme="coffee-gray" title="Coffee Brown & Silver Gray">
+                                <div class="preview-color coffee-primary"></div>
+                                <div class="preview-color gray-secondary"></div>
+                            </div>
+                            <div class="theme-preview" data-theme="coral-ruby" title="Fiery Coral & Dark Ruby">
+                                <div class="preview-color coral-primary"></div>
+                                <div class="preview-color ruby-secondary"></div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>

@@ -773,7 +773,7 @@ body {
 .memory-slider {
     width: 100%;
     height: 6px;
-    background: var(--glass-bg);
+    background: var(--button-bg);
     border-radius: 3px;
     -webkit-appearance: none;
     appearance: none;
@@ -1962,9 +1962,9 @@ body, .left-panel, .right-panel, .play-button, .version-dropdown,
 
 /* Theme Preview Styles */
 .theme-preview-container {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.5rem;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1rem;
     margin-top: 1rem;
 }
 
@@ -1997,6 +1997,53 @@ body, .left-panel, .right-panel, .play-button, .version-dropdown,
     width: 100%;
     height: 100%;
     background: linear-gradient(45deg, rgba(255,255,255,0.1), transparent);
+}
+
+/* Theme Preview Color Styles */
+/* Light Theme */
+.light-primary { background-color: #8b0000; }
+.light-secondary { background-color: #f0f0f0; }
+
+/* Dark Theme */
+.dark-primary { background-color: #ff1a1a; }
+.dark-secondary { background-color: #1a1a1a; }
+
+/* Gold Olive Theme */
+.gold-primary { background-color: #B39F5F; }
+.olive-secondary { background-color: #202216; }
+
+/* Teal Ivory Theme */
+.teal-primary { background-color: #5C899D; }
+.ivory-secondary { background-color: #FFFCEF; }
+
+/* Plum Green Theme */
+.plum-primary { background-color: #673147; }
+.green-secondary { background-color: #ECF4EF; }
+
+/* Antique Puce Theme */
+.puce-primary { background-color: #CC8899; }
+.antique-secondary { background-color: #FAEBD7; }
+
+/* Beige Tan Theme */
+.tan-primary { background-color: #B19079; }
+.beige-secondary { background-color: #EFEBE0; }
+
+/* Charcoal Lilac Theme */
+.lilac-primary { background-color: #D6CFE1; }
+.charcoal-secondary { background-color: #2E2E2E; }
+
+/* Coffee Gray Theme */
+.coffee-primary { background-color: #6F5A4B; }
+.gray-secondary { background-color: #E9E9EA; }
+
+/* Coral Ruby Theme */
+.coral-primary { background-color: #F77051; }
+.ruby-secondary { background-color: #5D0516; }
+
+/* Preview Element Styling */
+.preview-color {
+    height: 50%;
+    width: 100%;
 }
 
 /* Reset Button Styles */
@@ -2069,4 +2116,34 @@ body, .left-panel, .right-panel, .play-button, .version-dropdown,
 .quick-setting-label {
     font-size: 0.9rem;
     font-weight: 500;
+}
+
+/* Theme notification */
+.theme-notification {
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    background: var(--primary-color);
+    color: white;
+    padding: 10px 20px;
+    border-radius: 8px;
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
+    z-index: 3000;
+    animation: slideIn 0.3s ease;
+    font-family: 'Poppins', sans-serif;
+    font-size: 0.9rem;
+}
+
+.theme-notification.fade-out {
+    animation: fadeOut 0.5s ease forwards;
+}
+
+@keyframes slideIn {
+    from { transform: translateX(100px); opacity: 0; }
+    to { transform: translateX(0); opacity: 1; }
+}
+
+@keyframes fadeOut {
+    from { opacity: 1; }
+    to { opacity: 0; }
 }

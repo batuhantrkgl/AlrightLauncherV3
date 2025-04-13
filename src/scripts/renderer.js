@@ -3024,10 +3024,6 @@ function enhanceSettingsUI() {
                 <div class="quick-setting-icon">🎨</div>
                 <div class="quick-setting-label">Theme: ${localStorage.getItem('theme') || 'Light'}</div>
             </div>
-            <div class="quick-setting-item" data-setting="java">
-                <div class="quick-setting-icon">☕</div>
-                <div class="quick-setting-label">Java Settings</div>
-            </div>
         `;
         
         // Insert at the beginning of the first tab
@@ -3183,6 +3179,67 @@ function updateQuickSettings() {
         offlineQuickSetting.querySelector('.quick-setting-icon').textContent = 
             offlineMode ? '🔌' : '🌐';
     }
+}
+
+// ...existing code...
+
+// Theme switcher functionality
+document.addEventListener('DOMContentLoaded', () => {
+    // Get all theme preview elements
+    const themePreviewElements = document.querySelectorAll('.theme-preview');
+    
+    // Get saved theme from localStorage or use default
+    const savedTheme = localStorage.getItem('selectedTheme') || 'light';
+    
+    // Apply the saved theme
+    document.body.setAttribute('data-theme', savedTheme);
+    
+    // Mark the current theme preview as active
+    themePreviewElements.forEach(preview => {
+        if (preview.getAttribute('data-theme') === savedTheme) {
+            preview.classList.add('active');
+        }
+        
+        // Add click event listener to each theme preview
+        preview.addEventListener('click', () => {
+            // Get the theme name from the data-theme attribute
+            const themeName = preview.getAttribute('data-theme');
+            
+            // Remove active class from all previews
+            themePreviewElements.forEach(p => p.classList.remove('active'));
+            
+            // Add active class to clicked preview
+            preview.classList.add('active');
+            
+            // Apply the theme to the body element
+            document.body.setAttribute('data-theme', themeName);
+            
+            // Save the selected theme to localStorage
+            localStorage.setItem('selectedTheme', themeName);
+            
+            // Show notification (optional)
+            showNotification(`Theme changed to ${preview.getAttribute('title')}`);
+        });
+    });
+});
+
+// Helper function to show a notification (you can implement this or use an existing one)
+function showNotification(message) {
+    // You can implement this based on your UI, or remove if not needed
+    console.log(message);
+    // Example: Create a temporary notification element
+    const notification = document.createElement('div');
+    notification.className = 'theme-notification';
+    notification.textContent = message;
+    document.body.appendChild(notification);
+    
+    // Remove after 2 seconds
+    setTimeout(() => {
+        notification.classList.add('fade-out');
+        setTimeout(() => {
+            notification.remove();
+        }, 500);
+    }, 2000);
 }
 
 // ...existing code...
