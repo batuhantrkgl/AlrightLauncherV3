@@ -346,9 +346,10 @@ class AuthService {
             logger.info('Step 6: Getting Minecraft profile');
             const profile = await this.getMinecraftProfile(mcResponse.access_token);
             
+            // Add explicit check for profile validity
             if (!profile || !profile.name) {
-                logger.error('Failed to get Minecraft profile');
-                return { error: 'Failed to get Minecraft profile' };
+                logger.error('Retrieved profile is invalid:', profile);
+                return { error: 'Failed to get a valid Minecraft profile' };
             }
             
             // Save authentication data

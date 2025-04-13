@@ -2404,8 +2404,9 @@ async function initializeAuth() {
             console.log('Microsoft login clicked, sending auth request...');
             const profile = await window.minecraft.auth.login();
             
-            if (profile.error) {
-                throw new Error(profile.error);
+            // Enhanced error checking
+            if (!profile || profile.error || !profile.name) {
+                throw new Error(profile?.error || 'Login failed: Invalid or missing profile data');
             }
             
             console.log(`Successfully logged in as ${profile.name}`);
@@ -2621,6 +2622,12 @@ async function initializeAuth() {
 
 // Update UI when user is logged in
 function updateUIForLoggedInUser(profile) {
+    // Check if profile is valid
+    if (!profile || !profile.name) {
+        console.error('Invalid profile data:', profile);
+        return; // Don't update UI with invalid data
+    }
+    
     const usernameInput = document.getElementById('username-input');
     if (!usernameInput) {
         console.error('Username input not found when trying to update UI for logged in user');
@@ -2712,8 +2719,9 @@ function updateUIForLoggedOutUser() {
                 console.log('Microsoft login clicked, sending auth request...');
                 const profile = await window.minecraft.auth.login();
                 
-                if (profile.error) {
-                    throw new Error(profile.error);
+                // Enhanced error checking
+                if (!profile || profile.error || !profile.name) {
+                    throw new Error(profile?.error || 'Login failed: Invalid or missing profile data');
                 }
                 
                 console.log(`Successfully logged in as ${profile.name}`);
