@@ -2791,3 +2791,398 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 // ...existing code...
+
+// Enhance the settings UI setup when DOM is loaded
+window.addEventListener('DOMContentLoaded', async () => {
+    // ...existing code...
+    
+    // After initializing DOM elements, enhance the settings UI
+    enhanceSettingsUI();
+    
+    // ...existing code...
+});
+
+// Add a function to enhance the settings UI with new features
+function enhanceSettingsUI() {
+    const settingsContent = document.querySelector('.settings-content');
+    if (!settingsContent) return;
+    
+    // 1. Add search functionality
+    const searchContainer = document.createElement('div');
+    searchContainer.className = 'settings-search-container';
+    searchContainer.innerHTML = `<input type="text" placeholder="Search settings..." id="settings-search">`;
+    
+    // Insert search at the top, after header
+    const settingsHeader = document.querySelector('.settings-header');
+    if (settingsHeader) {
+        settingsHeader.after(searchContainer);
+    } else {
+        settingsContent.prepend(searchContainer);
+    }
+    
+    // Search functionality implementation
+    const searchInput = document.getElementById('settings-search');
+    searchInput.addEventListener('input', e => {
+        const searchText = e.target.value.toLowerCase();
+        const settingItems = document.querySelectorAll('.setting-item');
+        
+        // If empty, show all sections
+        if (!searchText) {
+            document.querySelectorAll('.settings-section').forEach(section => {
+                section.style.display = 'block';
+            });
+            settingItems.forEach(item => {
+                item.style.display = 'flex';
+            });
+            return;
+        }
+        
+        // Check each setting for matches
+        let found = false;
+        settingItems.forEach(item => {
+            const text = item.textContent.toLowerCase();
+            const matches = text.includes(searchText);
+            
+            item.style.display = matches ? 'flex' : 'none';
+            if (matches) found = true;
+            
+            // Show parent sections that have matches
+            const section = item.closest('.settings-section');
+            if (section && matches) {
+                section.style.display = 'block';
+            }
+        });
+        
+        // Hide sections with no matching items
+        document.querySelectorAll('.settings-section').forEach(section => {
+            const hasVisibleItems = Array.from(section.querySelectorAll('.setting-item'))
+                .some(item => item.style.display !== 'none');
+            
+            section.style.display = hasVisibleItems ? 'block' : 'none';
+        });
+        
+        // Show a "no results" message if needed
+        let noResultsMsg = document.getElementById('no-settings-results');
+        if (!found) {
+            if (!noResultsMsg) {
+                noResultsMsg = document.createElement('div');
+                noResultsMsg.id = 'no-settings-results';
+                noResultsMsg.style.padding = '1rem';
+                noResultsMsg.style.textAlign = 'center';
+                noResultsMsg.style.color = 'var(--text-muted)';
+                settingsContent.appendChild(noResultsMsg);
+            }
+            noResultsMsg.textContent = `No settings found for "${searchText}"`;
+            noResultsMsg.style.display = 'block';
+        } else if (noResultsMsg) {
+            noResultsMsg.style.display = 'none';
+        }
+    });
+    
+    // 2. Add tooltips to settings
+    const tooltipData = {
+        'offline-toggle': 'Play without connecting to Minecraft servers. Useful when you have no internet connection.',
+        'skip-verification-toggle': 'Skip checking if game files are intact. Makes the game start faster but might cause errors if files are corrupted.',
+        'theme-selector': 'Change the visual appearance of the launcher.',
+        'ram-slider': 'Adjust the amount of memory allocated to Minecraft. More RAM can improve performance for modded gameplay.',
+        'fullscreen-toggle': 'Start Minecraft in full screen mode.',
+        'simulation-toggle': 'This is a debug feature that simulates the update process without actually updating.',
+        'update-channel': 'Choose between stable (recommended) or beta (testing) versions of the launcher.'
+    };
+    
+    // Add tooltips to settings based on ID
+    Object.entries(tooltipData).forEach(([id, text]) => {
+        const element = document.getElementById(id);
+        if (!element) return;
+        
+        const settingItem = element.closest('.setting-item');
+        if (!settingItem) return;
+        
+        const label = settingItem.querySelector('label');
+        if (!label) return;
+        
+        const tooltip = document.createElement('span');
+        tooltip.className = 'setting-tooltip';
+        tooltip.innerHTML = `<span class="tooltip-text">${text}</span>`;
+        
+        label.appendChild(tooltip);
+    });
+    
+    // 3. Add "Reset to Defaults" buttons to each settings section
+    document.querySelectorAll('.settings-section').forEach(section => {
+        const heading = section.querySelector('h3');
+        if (!heading) return;
+        
+        // Create a header container 
+        const headerContainer = document.createElement('div');
+        headerContainer.className = 'settings-section-header';
+        
+        // Move the heading into the container
+        heading.parentNode.insertBefore(headerContainer, heading);
+        headerContainer.appendChild(heading);
+        
+        // Add reset button
+        const resetButton = document.createElement('button');
+        resetButton.className = 'reset-settings';
+        resetButton.textContent = 'Reset to Default';
+        headerContainer.appendChild(resetButton);
+        
+        // Add click handler for reset
+        resetButton.addEventListener('click', () => {
+            if (confirm('Reset these settings to their default values?')) {
+                const sectionId = section.id || section.querySelector('h3')?.textContent.toLowerCase().replace(/\s+/g, '-');
+                resetSectionToDefault(sectionId);
+            }
+        });
+    });
+    
+    // 4. Add theme preview feature
+    const themeSelector = document.getElementById('theme-selector');
+    if (themeSelector) {
+        const settingItem = themeSelector.closest('.setting-item');
+        if (settingItem) {
+            // Create theme preview container
+            const previewContainer = document.createElement('div');
+            previewContainer.className = 'theme-preview-container';
+            settingItem.appendChild(previewContainer);
+            
+            // Add preview for each theme option
+            const themes = {
+                'light': { bg: '#f0f0f0', accent: '#8b0000' },
+                'dark': { bg: '#1a1a1a', accent: '#ff1a1a' },
+                'gold-olive': { bg: '#F2DE9B', accent: '#B39F5F' },
+                'teal-ivory': { bg: '#FFFCEF', accent: '#5C899D' },
+                'plum-green': { bg: '#ECF4EF', accent: '#673147' },
+                'antique-puce': { bg: '#FAEBD7', accent: '#CC8899' },
+                'beige-tan': { bg: '#EFEBE0', accent: '#B19079' },
+                'charcoal-lilac': { bg: '#2E2E2E', accent: '#D6CFE1' },
+                'coffee-gray': { bg: '#E9E9EA', accent: '#6F5A4B' },
+                'coral-ruby': { bg: '#5D0516', accent: '#F77051' }
+            };
+            
+            Object.entries(themes).forEach(([theme, colors]) => {
+                const preview = document.createElement('div');
+                preview.className = 'theme-preview';
+                preview.dataset.theme = theme;
+                preview.style.background = colors.bg;
+                preview.style.borderLeft = `10px solid ${colors.accent}`;
+                
+                // Make it the active theme if it matches current selection
+                if (themeSelector.value === theme) {
+                    preview.classList.add('active');
+                }
+                
+                previewContainer.appendChild(preview);
+                
+                // Add click handler
+                preview.addEventListener('click', () => {
+                    // Update dropdown value
+                    themeSelector.value = theme;
+                    
+                    // Trigger the change event
+                    themeSelector.dispatchEvent(new Event('change'));
+                    
+                    // Update active state
+                    document.querySelectorAll('.theme-preview').forEach(p => {
+                        p.classList.toggle('active', p === preview);
+                    });
+                });
+                
+                // Add tooltip with theme name
+                const formattedName = theme.split('-').map(word => 
+                    word.charAt(0).toUpperCase() + word.slice(1)
+                ).join(' ');
+                
+                preview.title = formattedName;
+            });
+            
+            // Update active preview when selector changes
+            themeSelector.addEventListener('change', () => {
+                const activeTheme = themeSelector.value;
+                document.querySelectorAll('.theme-preview').forEach(preview => {
+                    preview.classList.toggle('active', preview.dataset.theme === activeTheme);
+                });
+            });
+        }
+    }
+    
+    // 5. Add Quick Settings section at the top of the first tab
+    const firstTabContent = document.querySelector('.tab-content.active');
+    if (firstTabContent) {
+        const quickSettings = document.createElement('div');
+        quickSettings.className = 'quick-settings';
+        quickSettings.innerHTML = `
+            <div class="quick-setting-item" data-setting="ram">
+                <div class="quick-setting-icon">💾</div>
+                <div class="quick-setting-label">Memory: ${localStorage.getItem('maxRam') || '2048'}MB</div>
+            </div>
+            <div class="quick-setting-item" data-setting="offline">
+                <div class="quick-setting-icon">🌐</div>
+                <div class="quick-setting-label">Online Mode</div>
+            </div>
+            <div class="quick-setting-item" data-setting="theme">
+                <div class="quick-setting-icon">🎨</div>
+                <div class="quick-setting-label">Theme: ${localStorage.getItem('theme') || 'Light'}</div>
+            </div>
+            <div class="quick-setting-item" data-setting="java">
+                <div class="quick-setting-icon">☕</div>
+                <div class="quick-setting-label">Java Settings</div>
+            </div>
+        `;
+        
+        // Insert at the beginning of the first tab
+        firstTabContent.prepend(quickSettings);
+        
+        // Update offline mode indicator
+        const offlineQuickSetting = document.querySelector('.quick-setting-item[data-setting="offline"]');
+        if (offlineQuickSetting) {
+            const offlineMode = localStorage.getItem('offlineMode') === 'true';
+            offlineQuickSetting.querySelector('.quick-setting-label').textContent = 
+                offlineMode ? 'Offline Mode' : 'Online Mode';
+            offlineQuickSetting.querySelector('.quick-setting-icon').textContent = 
+                offlineMode ? '🔌' : '🌐';
+        }
+        
+        // Add click handlers for quick settings
+        document.querySelectorAll('.quick-setting-item').forEach(item => {
+            item.addEventListener('click', () => {
+                const setting = item.dataset.setting;
+                
+                // Find the corresponding tab and setting
+                switch(setting) {
+                    case 'ram':
+                        document.querySelector('.settings-tab[data-tab="game-settings"]').click();
+                        document.getElementById('ram-slider')?.scrollIntoView({ behavior: 'smooth' });
+                        break;
+                    case 'offline':
+                        document.querySelector('.settings-tab[data-tab="game-settings"]').click();
+                        document.getElementById('offline-toggle')?.scrollIntoView({ behavior: 'smooth' });
+                        break;
+                    case 'theme':
+                        document.querySelector('.settings-tab[data-tab="launcher-settings"]').click();
+                        document.getElementById('theme-selector')?.scrollIntoView({ behavior: 'smooth' });
+                        break;
+                    case 'java':
+                        document.querySelector('.settings-tab[data-tab="advanced-settings"]').click();
+                        // Scroll to Java settings section if it exists
+                        setTimeout(() => {
+                            const javaSection = Array.from(document.querySelectorAll('.settings-section h3'))
+                                .find(h => h.textContent.includes('Java'))?.closest('.settings-section');
+                            
+                            if (javaSection) javaSection.scrollIntoView({ behavior: 'smooth' });
+                        }, 300);
+                        break;
+                }
+            });
+        });
+    }
+}
+
+// Helper function to reset sections to default values
+function resetSectionToDefault(sectionId) {
+    switch(sectionId) {
+        case 'game-settings':
+        case 'memory-settings':
+            // Reset RAM to default (half of system RAM or 2048MB)
+            localStorage.setItem('maxRam', '2048');
+            const ramSlider = document.getElementById('ram-slider');
+            const ramValue = document.getElementById('ram-value');
+            if (ramSlider && ramValue) {
+                ramSlider.value = 2048;
+                ramValue.textContent = 2048;
+            }
+            
+            // Reset offline mode settings
+            localStorage.setItem('offlineMode', 'false');
+            localStorage.setItem('skipVerification', 'false');
+            const offlineToggle = document.getElementById('offline-toggle');
+            const skipVerificationToggle = document.getElementById('skip-verification-toggle');
+            if (offlineToggle) offlineToggle.checked = false;
+            if (skipVerificationToggle) {
+                skipVerificationToggle.checked = false;
+                skipVerificationToggle.disabled = true;
+            }
+            
+            // Reset fullscreen setting
+            localStorage.setItem('fullscreen', 'false');
+            const fullscreenToggle = document.getElementById('fullscreen-toggle');
+            if (fullscreenToggle) fullscreenToggle.checked = false;
+            
+            window.minecraft.logger.info('Game settings reset to defaults');
+            break;
+            
+        case 'launcher-settings':
+        case 'appearance':
+            // Reset theme to light
+            localStorage.setItem('theme', 'light');
+            document.body.removeAttribute('data-theme');
+            const themeSelector = document.getElementById('theme-selector');
+            if (themeSelector) themeSelector.value = 'light';
+            
+            // Update theme previews if they exist
+            document.querySelectorAll('.theme-preview').forEach(preview => {
+                preview.classList.toggle('active', preview.dataset.theme === 'light');
+            });
+            
+            window.minecraft.logger.info('Launcher appearance settings reset to defaults');
+            break;
+            
+        case 'server-settings':
+            // Reset server settings
+            // This would depend on your specific implementation
+            window.minecraft.logger.info('Server settings reset to defaults');
+            break;
+            
+        case 'advanced-settings':
+            // Reset simulation settings
+            const simulationToggle = document.getElementById('simulation-toggle');
+            const failDownloadToggle = document.getElementById('simulation-fail-download');
+            const failInstallToggle = document.getElementById('simulation-fail-install');
+            
+            if (simulationToggle) simulationToggle.checked = false;
+            if (failDownloadToggle) failDownloadToggle.checked = false;
+            if (failInstallToggle) failInstallToggle.checked = false;
+            
+            // Trigger change event to update the backend
+            if (simulationToggle) {
+                simulationToggle.dispatchEvent(new Event('change'));
+            }
+            
+            window.minecraft.logger.info('Advanced settings reset to defaults');
+            break;
+            
+        default:
+            window.minecraft.logger.warn(`Unknown settings section: ${sectionId}`);
+    }
+    
+    // Refresh the UI after reset
+    updateQuickSettings();
+    showNotification('Settings reset to defaults');
+}
+
+// Helper function to update the quick settings display
+function updateQuickSettings() {
+    const ramQuickSetting = document.querySelector('.quick-setting-item[data-setting="ram"]');
+    if (ramQuickSetting) {
+        ramQuickSetting.querySelector('.quick-setting-label').textContent = 
+            `Memory: ${localStorage.getItem('maxRam') || '2048'}MB`;
+    }
+    
+    const themeQuickSetting = document.querySelector('.quick-setting-item[data-setting="theme"]');
+    if (themeQuickSetting) {
+        const themeName = localStorage.getItem('theme') || 'Light';
+        themeQuickSetting.querySelector('.quick-setting-label').textContent = 
+            `Theme: ${themeName.charAt(0).toUpperCase() + themeName.slice(1).replace('-', ' ')}`;
+    }
+    
+    const offlineQuickSetting = document.querySelector('.quick-setting-item[data-setting="offline"]');
+    if (offlineQuickSetting) {
+        const offlineMode = localStorage.getItem('offlineMode') === 'true';
+        offlineQuickSetting.querySelector('.quick-setting-label').textContent = 
+            offlineMode ? 'Offline Mode' : 'Online Mode';
+        offlineQuickSetting.querySelector('.quick-setting-icon').textContent = 
+            offlineMode ? '🔌' : '🌐';
+    }
+}
+
+// ...existing code...
