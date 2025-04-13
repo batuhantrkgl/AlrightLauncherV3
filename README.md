@@ -2,36 +2,6 @@
 
 Yet Another Minecraft Launcher - A modern, easy-to-use Minecraft launcher built with Electron.
 
-## Features
-
-- **Cross-platform** support (Windows, Linux, and macOS)
-- **Local Server Management**
-  - Create and manage Minecraft servers
-  - Real-time server logs
-  - Server configuration options (memory, players, gamemode, etc.)
-  - Server status monitoring
-- **Offline Mode Support**
-  - Play without Microsoft account
-  - Local authentication server
-  - Multiplayer functionality in offline mode
-- **Version Management**
-  - Install any Minecraft version
-  - Automatic Java detection and installation
-  - Custom installation directory
-- **User Interface**
-  - Modern, clean design
-  - Light/Dark theme support
-  - Real-time logging
-  - Debug console
-- **Performance**
-  - Memory usage optimization
-  - Custom RAM allocation
-  - Native system integration
-- **Additional Features**
-  - Standalone mode creation
-  - Desktop shortcut creation
-  - Crash reporting system
-  - Auto-update functionality
 
 ## Installation
 
@@ -39,8 +9,8 @@ Yet Another Minecraft Launcher - A modern, easy-to-use Minecraft launcher built 
 
 1. Download the latest release for your operating system:
    - Windows: `Alright Launcher-Setup-[version].exe`
-   - Linux: `Alright Launcher-[version].AppImage`
-   - macOS: `Alright Launcher-[version].dmg`
+   - Linux: `Alright Launcher-[version].AppImage` (Soon)
+   - macOS: `Alright Launcher-[version].dmg` (Soon)
 
 2. Run the installer and follow the on-screen instructions.
 
@@ -57,15 +27,15 @@ bun install    # or npm install
 bun start     # or npm start
 
 # Build the application
-bun run build # or npm run build
+bun run bunbuild.js # or npm run build
 ```
 
 ## Development Scripts
 
 - `bun start` - Start the application in development mode
 - `bun run pack` - Create an unpacked build
-- `bun run build` - Create a production build for Windows
-- `bun run dist` - Create distributables for Windows
+- `bun run bunbuild.js` - Create a production build for Windows
+- `npm run build` - Create a production build for Windows
 
 ## Documentation
 
@@ -84,7 +54,6 @@ bun run build # or npm run build
 ### Version Management
 - Install any Minecraft version
 - Automatic dependency handling
-- Custom installation paths
 - Version isolation
 
 ## Contributing
@@ -94,6 +63,11 @@ bun run build # or npm run build
 3. Commit your changes
 4. Push to the branch
 5. Create a new Pull Request
+
+## Shortcuts
+- Ctrl + Shift: Shows the log-out button (if user is authenticated with Microsoft Account)
+- Ctrl + Clicking to Version Selector: Shows/Hides the custom modloaders, for example: fabric
+
 
 ## License
 
