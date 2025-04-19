@@ -71,6 +71,10 @@ jobs:
             echo "IS_BETA=false" >> $GITHUB_OUTPUT
           fi
 
+      - name: Upgrade Bun to latest canary version
+        run: bun upgrade --canary
+        shell: bash
+
       - name: Install dependencies
         run: bun install
 
