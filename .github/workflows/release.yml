@@ -2,8 +2,8 @@ name: Build, Release, and Update Beta Info
 
 on:
   push:
-    branches: [main, master]
-    tags: ['v*']
+    branches: [ main, master ]
+    tags: [ 'v*' ]
   workflow_dispatch:
     inputs:
       forceRelease:
@@ -19,7 +19,7 @@ jobs:
   release:
     strategy:
       matrix:
-        os: [windows-latest, macos-latest, ubuntu-latest]
+        os: [ windows-latest, macos-latest, ubuntu-latest ]
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -136,7 +136,8 @@ jobs:
           INSTALLER_NAME="${{ steps.calculate_sha.outputs.INSTALLER_NAME }}"
 
           if [ ! -f "updates.json" ]; then
-            echo '{
+            cat > updates.json << 'EOJSON'
+            {
               "stable": {
                 "version": "3.0.0",
                 "releaseDate": "2023-01-01",
@@ -151,7 +152,8 @@ jobs:
                 "sha256": "",
                 "releaseNotes": "Initial beta release"
               }
-            }' > updates.json
+            }
+            EOJSON
           fi
 
           DOWNLOAD_URL="https://github.com/${{ github.repository }}/releases/download/${{ steps.get_version.outputs.VERSION }}/${INSTALLER_NAME}"
@@ -160,38 +162,38 @@ jobs:
           RELEASE_NOTES_ESCAPED=$(echo "$RELEASE_NOTES" | jq -sR .)
 
           jq ".beta.version = \"$VERSION\" |
-              .beta.releaseDate = \"$RELEASE_DATE\" |
-              .beta.downloadUrl = \"$DOWNLOAD_URL\" |
-              .beta.sha256 = \"$SHA256\" |
-              .beta.releaseNotes = $RELEASE_NOTES_ESCAPED" updates.json > updates.json.new || {
+          .beta.releaseDate = \"$RELEASE_DATE\" |
+          .beta.downloadUrl = \"$DOWNLOAD_URL\" |
+          .beta.sha256 = \"$SHA256\" |
+          .beta.releaseNotes = $RELEASE_NOTES_ESCAPED" updates.json > updates.json.new || {
             echo "jq failed, using Python fallback"
 
-            cat <<EOF > update_beta.py
-import json, sys
+            cat > update_beta.py << 'EOPY'
+              import json, sys
 
-VERSION = "$VERSION"
-RELEASE_DATE = "$RELEASE_DATE"
-DOWNLOAD_URL = "$DOWNLOAD_URL"
-SHA256 = "$SHA256"
-RELEASE_NOTES = $RELEASE_NOTES_ESCAPED
+              VERSION = "$VERSION"
+              RELEASE_DATE = "$RELEASE_DATE"
+              DOWNLOAD_URL = "$DOWNLOAD_URL"
+              SHA256 = "$SHA256"
+              RELEASE_NOTES = $RELEASE_NOTES_ESCAPED
 
-try:
-    with open('updates.json', 'r', encoding='utf-8') as f:
-        data = json.load(f)
+            try:
+              with open('updates.json', 'r', encoding='utf-8') as f:
+                data = json.load(f)
 
-    data['beta']['version'] = VERSION
-    data['beta']['releaseDate'] = RELEASE_DATE
-    data['beta']['downloadUrl'] = DOWNLOAD_URL
-    data['beta']['sha256'] = SHA256
-    data['beta']['releaseNotes'] = RELEASE_NOTES
+              data['beta']['version'] = VERSION
+              data['beta']['releaseDate'] = RELEASE_DATE
+              data['beta']['downloadUrl'] = DOWNLOAD_URL
+              data['beta']['sha256'] = SHA256
+              data['beta']['releaseNotes'] = RELEASE_NOTES
 
-    with open('updates.json.new', 'w', encoding='utf-8') as f:
-        json.dump(data, f, indent=2)
+              with open('updates.json.new', 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=2)
 
-except Exception as e:
-    print(f'Error updating JSON: {e}')
-    sys.exit(1)
-EOF
+            except Exception as e:
+              print(f'Error updating JSON: { e }')
+              sys.exit(1)
+            EOPY
 
             python3 update_beta.py
           }
