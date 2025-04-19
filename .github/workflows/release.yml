@@ -1,38 +1,40 @@
-name: Build, Release, and Update Beta Info
+name: Build and Release
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ master ]
     tags: [ 'v*' ]
-  workflow_dispatch:
-    inputs:
-      forceRelease:
-        description: 'Force release creation'
-        required: false
-        type: boolean
-        default: false
-
-permissions:
-  contents: write
+  pull_request:
+    branches: [ master ]
 
 jobs:
-  release:
+  build:
     strategy:
       matrix:
-        os: [ windows-latest, macos-latest, ubuntu-latest ]
+        os: [windows-latest, macos-latest, ubuntu-latest]
+      fail-fast: false
+
     runs-on: ${{ matrix.os }}
+
+    outputs:
+      VERSION: ${{ steps.version.outputs.VERSION }}
+      IS_TAG: ${{ steps.version.outputs.IS_TAG }}
+      IS_BETA: ${{ steps.version.outputs.IS_BETA }}
 
     steps:
       - name: Check out Git repository
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-      - name: Setup Node.js
+      - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: latest
-          cache: 'npm'
+          cache: npm
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
 
       - name: Cache Electron
         uses: actions/cache@v3
@@ -44,13 +46,28 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-electron-cache-
 
-      - name: Install bun
-        uses: oven-sh/setup-bun@v1
-        with:
-          bun-version: latest
+      - name: Install dependencies with retry
+        shell: bash
+        run: |
+          # First try with Bun
+          bun upgrade --canary || true
+          
+          max_attempts=3
+          attempt=0
+          until [ $attempt -ge $max_attempts ]
+          do
+            bun install && break
+            attempt=$((attempt+1))
+            echo "Attempt $attempt failed. Retrying in 5 seconds..."
+            sleep 5
+          done
+          if [ $attempt -eq $max_attempts ]; then
+            echo "Falling back to npm installation"
+            npm ci
+          fi
 
-      - name: Get version information
-        id: get_version
+      - name: Set version info
+        id: version
         shell: bash
         run: |
           if [[ $GITHUB_REF == refs/tags/v* ]]; then
@@ -64,162 +81,87 @@ jobs:
             echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
             echo "IS_TAG=false" >> $GITHUB_OUTPUT
           fi
-
+          
           if echo "$VERSION" | grep -E "beta|alpha|rc" > /dev/null; then
             echo "IS_BETA=true" >> $GITHUB_OUTPUT
           else
             echo "IS_BETA=false" >> $GITHUB_OUTPUT
           fi
 
-      - name: Upgrade Bun to latest canary version
-        run: bun upgrade --canary
-        shell: bash
-
-      - name: Install dependencies
-        run: bun install
-
-      - name: Install Wine
-        if: matrix.os == 'ubuntu-latest'
+      - name: Build Electron app for Windows
+        if: matrix.os == 'windows-latest'
         run: |
-          sudo dpkg --add-architecture i386
-          sudo apt-get update
-          sudo apt-get install -y wine wine32 wine64
-        shell: bash
-
-      - name: Build Electron app
-        run: npm run build
+          $env:npm_config_build_from_source=false
+          npm rebuild
+          electron-builder build --win --x64 --config.asar=true
+        shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ELECTRON_CACHE: ~/.cache/electron
           ELECTRON_BUILDER_CACHE: ~/.cache/electron-builder
 
-      - name: Calculate SHA256 for Windows installer
-        id: calculate_sha
-        if: matrix.os == 'windows-latest'
+      - name: Build Electron app for macOS
+        if: matrix.os == 'macos-latest'
         run: |
-          Get-ChildItem -Path dist -Filter "*.exe" | ForEach-Object {
-            $hash = (Get-FileHash -Path $_.FullName -Algorithm SHA256).Hash
-            echo "SHA256=$hash" >> $env:GITHUB_OUTPUT
-            echo "INSTALLER_NAME=$($_.Name)" >> $env:GITHUB_OUTPUT
-          }
-        shell: pwsh
+          export npm_config_build_from_source=false
+          npm rebuild
+          electron-builder build --mac --x64 --config.asar=true
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ELECTRON_CACHE: ~/.cache/electron
+          ELECTRON_BUILDER_CACHE: ~/.cache/electron-builder
+
+      - name: Build Electron app for Linux
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          export npm_config_build_from_source=false
+          npm rebuild
+          electron-builder build --linux --x64 --config.asar=true
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ELECTRON_CACHE: ~/.cache/electron
+          ELECTRON_BUILDER_CACHE: ~/.cache/electron-builder
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: ${{ matrix.os }}-build
+          path: |
+            dist/*.exe
+            dist/*.dmg
+            dist/*.AppImage
+            dist/*.deb
+            dist/*.rpm
+            dist/*.snap
+            dist/*.yml
+            dist/latest*.yml
+            dist/latest*.yaml
+          if-no-files-found: ignore
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v3
+        with:
+          path: artifacts
+
+      - name: Display structure of downloaded files
+        run: ls -R artifacts
 
       - name: Create Release
-        id: create_release
         uses: softprops/action-gh-release@v1
-        if: ${{ (startsWith(github.ref, 'refs/tags/') || steps.get_version.outputs.IS_BETA == 'true' || github.event.inputs.forceRelease == 'true') && matrix.os == 'windows-latest' }}
         with:
-          tag_name: ${{ steps.get_version.outputs.VERSION }}
-          name: ${{ steps.get_version.outputs.IS_BETA == 'true' && 'Beta Release ' || 'Release ' }}${{ steps.get_version.outputs.VERSION }}
-          prerelease: ${{ steps.get_version.outputs.IS_BETA == 'true' || steps.get_version.outputs.IS_TAG == 'false' }}
-          body: |
-            ${{ steps.get_version.outputs.IS_BETA == 'true' && '## ⚠️ Beta Release' || (steps.get_version.outputs.IS_TAG == 'false' && '## Automated Build' || '## Stable Release') }}
-            
-            ${{ steps.get_version.outputs.IS_BETA == 'true' && 'This is a beta release and may contain bugs. Use at your own risk.' || (steps.get_version.outputs.IS_TAG == 'false' && 'This is an automated build from the latest commit.' || 'This is a stable release of AlrightLauncher.') }}
-            
-            ## Changes
-            ${{ github.event.head_commit.message || 'No description provided' }}
-            
-            ## SHA256 Checksums
-            - Windows Installer: `${{ steps.calculate_sha.outputs.SHA256 }}`
-            
-            ## Release Files
-            - 💻 Windows Installer: Includes everything you need to run the launcher
-            - 🐧 Linux AppImage: For Linux users
-            - 🍎 macOS DMG: For Mac users
-            - 📝 Latest.yml: Automatic update information file (Windows)
-          files: |
-            dist/*.exe
-            dist/*.AppImage
-            dist/*.dmg
-            dist/latest*.yml
+          draft: ${{ needs.build.outputs.IS_BETA == 'true' }}
+          prerelease: ${{ needs.build.outputs.IS_BETA == 'true' }}
+          files: artifacts/**/*
+          tag_name: ${{ needs.build.outputs.VERSION }}
+          name: AlrightLauncher ${{ needs.build.outputs.VERSION }}
+          generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Update Beta Info in updates.json
-        if: steps.get_version.outputs.IS_BETA == 'true' && matrix.os == 'windows-latest'
-        shell: bash
-        run: |
-          VERSION="${{ steps.get_version.outputs.VERSION }}"
-          VERSION=${VERSION#v}
-          RELEASE_DATE=$(date -u +"%Y-%m-%d")
-          RELEASE_NOTES="${{ github.event.head_commit.message || 'No description provided' }}"
-          SHA256="${{ steps.calculate_sha.outputs.SHA256 }}"
-          INSTALLER_NAME="${{ steps.calculate_sha.outputs.INSTALLER_NAME }}"
-
-          if [ ! -f "updates.json" ]; then
-            cat > updates.json << 'EOJSON'
-            {
-              "stable": {
-                "version": "3.0.0",
-                "releaseDate": "2023-01-01",
-                "downloadUrl": "",
-                "sha256": "",
-                "releaseNotes": "Initial release"
-              },
-              "beta": {
-                "version": "3.0.0",
-                "releaseDate": "2023-01-01",
-                "downloadUrl": "",
-                "sha256": "",
-                "releaseNotes": "Initial beta release"
-              }
-            }
-            EOJSON
-          fi
-
-          DOWNLOAD_URL="https://github.com/${{ github.repository }}/releases/download/${{ steps.get_version.outputs.VERSION }}/${INSTALLER_NAME}"
-          echo "Updating updates.json with download URL: $DOWNLOAD_URL"
-
-          RELEASE_NOTES_ESCAPED=$(echo "$RELEASE_NOTES" | jq -sR .)
-
-          jq ".beta.version = \"$VERSION\" |
-          .beta.releaseDate = \"$RELEASE_DATE\" |
-          .beta.downloadUrl = \"$DOWNLOAD_URL\" |
-          .beta.sha256 = \"$SHA256\" |
-          .beta.releaseNotes = $RELEASE_NOTES_ESCAPED" updates.json > updates.json.new || {
-            echo "jq failed, using Python fallback"
-
-            cat > update_beta.py << 'EOPY'
-              import json, sys
-
-              VERSION = "$VERSION"
-              RELEASE_DATE = "$RELEASE_DATE"
-              DOWNLOAD_URL = "$DOWNLOAD_URL"
-              SHA256 = "$SHA256"
-              RELEASE_NOTES = $RELEASE_NOTES_ESCAPED
-
-            try:
-              with open('updates.json', 'r', encoding='utf-8') as f:
-                data = json.load(f)
-
-              data['beta']['version'] = VERSION
-              data['beta']['releaseDate'] = RELEASE_DATE
-              data['beta']['downloadUrl'] = DOWNLOAD_URL
-              data['beta']['sha256'] = SHA256
-              data['beta']['releaseNotes'] = RELEASE_NOTES
-
-              with open('updates.json.new', 'w', encoding='utf-8') as f:
-                json.dump(data, f, indent=2)
-
-            except Exception as e:
-              print(f'Error updating JSON: { e }')
-              sys.exit(1)
-            EOPY
-
-            python3 update_beta.py
-          }
-
-          if [ -f "updates.json.new" ]; then
-            mv updates.json.new updates.json
-            echo "Successfully updated updates.json"
-          else
-            echo "Failed to create updated updates.json file"
-            exit 1
-          fi
-
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
-          git add updates.json
-          git commit -m "Update beta release info to ${{ steps.get_version.outputs.VERSION }}"
-          git push
