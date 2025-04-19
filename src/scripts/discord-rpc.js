@@ -4,150 +4,241 @@ const path = require('path');
 const fs = require('fs-extra');
 
 // Discord Developer Application Client ID
-const CLIENT_ID = '1065258622180921384'; // Replace with your Discord application client ID
+const CLIENT_ID = '1065258622180921384';
+
+// Repository and download links
+const REPO_URL = 'https://github.com/batuhantrkgl/AlrightLauncher';
+const RELEASES_URL = `${REPO_URL}/releases`;
+
+// Image assets
+const ASSETS = {
+  LAUNCHER: 'launcher_logo',
+  MINECRAFT: 'minecraft',
+  FABRIC: 'fabric',
+  FORGE: 'forge',
+  QUILT: 'quilt',
+  DOWNLOAD: 'download'
+};
+
+// Modloader identifiers
+const MODLOADERS = {
+  FABRIC: { key: 'fabric', name: 'Fabric', regexPattern: /fabric/ },
+  FORGE: { key: 'forge', name: 'Forge', regexPattern: /forge/ },
+  QUILT: { key: 'quilt', name: 'Quilt', regexPattern: /quilt/ }
+};
 
 class DiscordRPCClient {
-    constructor() {
-        this.rpc = new DiscordRPC.Client({ transport: 'ipc' });
+  constructor() {
+    this.rpc = new DiscordRPC.Client({ transport: 'ipc' });
+    this.isConnected = false;
+    this.version = app.getVersion();
+    this.clientId = CLIENT_ID;
+    this.startTimestamp = new Date();
+    this.reconnectAttempts = 0;
+    this.maxReconnectAttempts = 5;
+    this.reconnectTimeout = null;
+  }
+
+  async initialize() {
+    try {
+      // Register event handlers
+      this.rpc.on('ready', () => {
+        this.isConnected = true;
+        this.reconnectAttempts = 0;
+        console.log('Discord RPC connected');
+        this.setDefaultActivity();
+      });
+
+      this.rpc.on('disconnected', () => {
+        console.log('Discord RPC disconnected');
         this.isConnected = false;
-        this.version = app.getVersion();
-        this.startTimestamp = new Date();
-        this.clientId = CLIENT_ID;
+        this.attemptReconnect();
+      });
+
+      // Connect to Discord
+      await this.connect();
+      return true;
+    } catch (error) {
+      console.error('Failed to initialize Discord RPC:', error);
+      this.attemptReconnect();
+      return false;
+    }
+  }
+
+  async connect() {
+    try {
+      await this.rpc.login({ clientId: this.clientId });
+      return true;
+    } catch (error) {
+      console.error('Discord RPC login failed:', error);
+      return false;
+    }
+  }
+
+  attemptReconnect() {
+    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+      console.log(`Max reconnect attempts (${this.maxReconnectAttempts}) reached. Giving up.`);
+      return;
     }
 
-    async initialize() {
-        try {
-            // Check if Discord is running
-            if (!this.isDiscordRunning()) {
-                console.log('Discord is not running, RPC will not initialize');
-                return false;
-            }
-
-            // Register event handlers
-            this.rpc.on('ready', () => {
-                this.isConnected = true;
-                console.log('Discord RPC connected');
-                this.setDefaultActivity();
-            });
-
-            // Connect to Discord
-            await this.rpc.login({ clientId: this.clientId }).catch(console.error);
-            return true;
-        } catch (error) {
-            console.error('Failed to initialize Discord RPC:', error);
-            return false;
-        }
+    if (this.reconnectTimeout) {
+      clearTimeout(this.reconnectTimeout);
     }
 
-    isDiscordRunning() {
-        // A simple check - we just try to connect and if it fails, Discord is not running
-        // The actual connection will be handled in initialize()
-        return true;
+    this.reconnectAttempts++;
+    const delay = Math.min(30000, Math.pow(2, this.reconnectAttempts) * 1000);
+    
+    console.log(`Attempting to reconnect in ${delay/1000} seconds (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})`);
+    
+    this.reconnectTimeout = setTimeout(async () => {
+      if (!this.isConnected) {
+        await this.connect();
+      }
+    }, delay);
+  }
+
+  /**
+   * Get button configuration for activities
+   * @returns {Array} Array of button objects
+   */
+  getDefaultButtons() {
+    return [
+      {
+        label: app.isPackaged ? 'Download Stable' : 'Download Beta',
+        url: RELEASES_URL
+      },
+      {
+        label: 'GitHub Repository',
+        url: REPO_URL
+      }
+    ];
+  }
+
+  /**
+   * Creates a base activity object with common properties
+   * @param {Object} customProps - Custom properties to merge
+   * @returns {Object} The activity object
+   */
+  createBaseActivity(customProps = {}) {
+    return {
+      largeImageKey: ASSETS.LAUNCHER,
+      largeImageText: `AlrightLauncher v${this.version}`,
+      buttons: this.getDefaultButtons(),
+      ...customProps
+    };
+  }
+
+  setDefaultActivity() {
+    if (!this.isConnected) return false;
+
+    try {
+      this.rpc.setActivity(this.createBaseActivity({
+        details: 'In the launcher',
+        state: 'Browsing versions',
+        startTimestamp: this.startTimestamp,
+        smallImageKey: ASSETS.MINECRAFT,
+        smallImageText: 'Minecraft'
+      }));
+      return true;
+    } catch (error) {
+      console.error('Failed to set default activity:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Detect modloader from version string
+   * @param {string} version - Minecraft version string
+   * @returns {Object} Modloader info or null for vanilla
+   */
+  detectModloader(version) {
+    for (const [key, modloader] of Object.entries(MODLOADERS)) {
+      if (modloader.regexPattern.test(version)) {
+        return modloader;
+      }
+    }
+    return null; // Vanilla Minecraft
+  }
+
+  /**
+   * Clean up version string for display
+   * @param {string} version - Raw version string
+   * @returns {string} Cleaned version string
+   */
+  cleanVersionString(version) {
+    return version
+      .replace('fabric-loader-', '')
+      .replace('-fabric', '')
+      .replace('-forge', '')
+      .replace('-quilt', '');
+  }
+
+  setPlayingActivity(version) {
+    if (!this.isConnected) return false;
+
+    // Detect modloader
+    const modloader = this.detectModloader(version);
+    const cleanVersion = this.cleanVersionString(version);
+    
+    let versionDetails = 'Playing Minecraft';
+    let smallImageKey = ASSETS.MINECRAFT;
+    let smallImageText = 'Vanilla';
+
+    if (modloader) {
+      smallImageKey = modloader.key;
+      smallImageText = modloader.name;
+      versionDetails += ` with ${modloader.name}`;
     }
 
-    setDefaultActivity() {
-        if (!this.isConnected) return;
-
-        this.rpc.setActivity({
-            details: 'In the launcher',
-            state: 'Browsing versions',
-            startTimestamp: this.startTimestamp,
-            largeImageKey: 'launcher_logo',
-            largeImageText: 'AlrightLauncher v' + this.version,
-            smallImageKey: 'minecraft',
-            smallImageText: 'Minecraft',
-            buttons: [
-                {
-                    label: 'Download Launcher',
-                    url: 'https://github.com/batuhantrkgl/AlrightLauncher/releases'
-                },
-                {
-                    label: 'GitHub Repository',
-                    url: 'https://github.com/batuhantrkgl/AlrightLauncher'
-                }
-            ]
-        }).catch(console.error);
+    try {
+      this.rpc.setActivity(this.createBaseActivity({
+        details: versionDetails,
+        state: `Version: ${cleanVersion}`,
+        startTimestamp: new Date(),
+        smallImageKey: smallImageKey,
+        smallImageText: smallImageText
+      }));
+      return true;
+    } catch (error) {
+      console.error('Failed to set playing activity:', error);
+      return false;
     }
+  }
 
-    setPlayingActivity(version) {
-        if (!this.isConnected) return;
+  setInstallingActivity(version) {
+    if (!this.isConnected) return false;
 
-        // Extract modloader type if present
-        let versionDetails = 'Playing Minecraft';
-        let smallImageKey = 'minecraft';
-        let smallImageText = 'Vanilla';
-
-        if (version.includes('fabric')) {
-            smallImageKey = 'fabric';
-            smallImageText = 'Fabric';
-            versionDetails += ' with Fabric';
-        } else if (version.includes('forge')) {
-            smallImageKey = 'forge';
-            smallImageText = 'Forge';
-            versionDetails += ' with Forge';
-        } else if (version.includes('quilt')) {
-            smallImageKey = 'quilt';
-            smallImageText = 'Quilt';
-            versionDetails += ' with Quilt';
-        }
-
-        // Clean up version string for display
-        let cleanVersion = version.replace('fabric-loader-', '')
-                                  .replace('-fabric', '')
-                                  .replace('-forge', '')
-                                  .replace('-quilt', '');
-
-        this.rpc.setActivity({
-            details: versionDetails,
-            state: `Version: ${cleanVersion}`,
-            startTimestamp: new Date(),
-            largeImageKey: 'launcher_logo',
-            largeImageText: 'AlrightLauncher v' + this.version,
-            smallImageKey: smallImageKey,
-            smallImageText: smallImageText,
-            buttons: [
-                {
-                    label: app.isPackaged ? 'Download Stable' : 'Download Beta',
-                    url: 'https://github.com/batuhantrkgl/AlrightLauncher/releases'
-                },
-                {
-                    label: 'GitHub Repository',
-                    url: 'https://github.com/batuhantrkgl/AlrightLauncher'
-                }
-            ]
-        }).catch(console.error);
+    try {
+      this.rpc.setActivity(this.createBaseActivity({
+        details: 'Installing Minecraft',
+        state: `Version: ${version}`,
+        startTimestamp: new Date(),
+        smallImageKey: ASSETS.DOWNLOAD,
+        smallImageText: 'Installing...'
+      }));
+      return true;
+    } catch (error) {
+      console.error('Failed to set installing activity:', error);
+      return false;
     }
+  }
 
-    setInstallingActivity(version) {
-        if (!this.isConnected) return;
-
-        this.rpc.setActivity({
-            details: 'Installing Minecraft',
-            state: `Version: ${version}`,
-            startTimestamp: new Date(),
-            largeImageKey: 'launcher_logo',
-            largeImageText: 'AlrightLauncher v' + this.version,
-            smallImageKey: 'download',
-            smallImageText: 'Installing...',
-            buttons: [
-                {
-                    label: app.isPackaged ? 'Download Stable' : 'Download Beta',
-                    url: 'https://github.com/batuhantrkgl/AlrightLauncher/releases'
-                },
-                {
-                    label: 'GitHub Repository',
-                    url: 'https://github.com/batuhantrkgl/AlrightLauncher'
-                }
-            ]
-        }).catch(console.error);
+  shutdown() {
+    if (this.reconnectTimeout) {
+      clearTimeout(this.reconnectTimeout);
+      this.reconnectTimeout = null;
     }
-
-    shutdown() {
-        if (this.isConnected) {
-            this.rpc.destroy().catch(console.error);
-            this.isConnected = false;
-        }
+    
+    if (this.isConnected) {
+      try {
+        this.rpc.destroy();
+      } catch (error) {
+        console.error('Error shutting down Discord RPC:', error);
+      } finally {
+        this.isConnected = false;
+      }
     }
+  }
 }
 
 module.exports = new DiscordRPCClient();

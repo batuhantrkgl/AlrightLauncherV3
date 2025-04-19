@@ -1587,10 +1587,11 @@ class MinecraftLauncher {
         if (offlineMode) {
           // Only add mock auth server URLs for offline mode
           logger.info('Using offline mode with mock authentication');
-          jvmArgs.push('-Dminecraft.api.auth.host=http://127.0.0.1:25566');
-          jvmArgs.push('-Dminecraft.api.account.host=http://127.0.0.1:25566');
-          jvmArgs.push('-Dminecraft.api.session.host=http://127.0.0.1:25566');
-          jvmArgs.push('-Dminecraft.api.services.host=http://127.0.0.1:25566');
+          const authPort = await this.authServer.getPort(); // Assuming you have a reference to authServer
+          jvmArgs.push(`-Dminecraft.api.auth.host=http://127.0.0.1:${authPort}`);
+          jvmArgs.push(`-Dminecraft.api.account.host=http://127.0.0.1:${authPort}`);
+          jvmArgs.push(`-Dminecraft.api.session.host=http://127.0.0.1:${authPort}`);
+          jvmArgs.push(`-Dminecraft.api.services.host=http://127.0.0.1:${authPort}`);
         } else {
           logger.info('Using real Minecraft authentication - no mock servers');
         }

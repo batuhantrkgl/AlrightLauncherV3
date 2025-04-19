@@ -17,19 +17,33 @@ permissions:
 
 jobs:
   release:
-    runs-on: windows-latest  # Changed to Windows for native module compatibility
+    strategy:
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
 
     steps:
       - name: Check out Git repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # Fetch all history for version determination
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: latest
-          cache: 'npm'  # Enable caching
+          cache: 'npm'
+
+      # Add more specific caching for electron files
+      - name: Cache Electron
+        uses: actions/cache@v3
+        with:
+          path: |
+            ${{ github.workspace }}/.cache/electron
+            ${{ github.workspace }}/.cache/electron-builder
+          key: ${{ runner.os }}-electron-cache-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-electron-cache-
 
       - name: Install bun
         uses: oven-sh/setup-bun@v1
@@ -42,12 +56,10 @@ jobs:
         run: |
           # Check if this is a tag push
           if [[ $GITHUB_REF == refs/tags/v* ]]; then
-            # For tags, use the tag name
             VERSION=${GITHUB_REF#refs/tags/}
             echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
             echo "IS_TAG=true" >> $GITHUB_OUTPUT
           else
-            # For regular commits, use package.json version + beta + short SHA
             PKG_VERSION=$(node -p "require('./package.json').version")
             SHORT_SHA=$(git rev-parse --short HEAD)
             VERSION="v${PKG_VERSION}-beta.${SHORT_SHA}"
@@ -65,17 +77,29 @@ jobs:
       - name: Install dependencies
         run: bun install
 
+      - name: Calculate SHA256 for Windows installer
+        id: calculate_sha
+        if: matrix.os == 'windows-latest'
+        run: |
+          # Find all exe files in the dist directory
+          Get-ChildItem -Path dist -Filter "*.exe" | ForEach-Object {
+            $hash = (Get-FileHash -Path $_.FullName -Algorithm SHA256).Hash
+            echo "SHA256=$hash" >> $env:GITHUB_OUTPUT
+            echo "INSTALLER_NAME=$($_.Name)" >> $env:GITHUB_OUTPUT
+          }
+        shell: pwsh
+
       - name: Build Electron app
         run: npm run build
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ELECTRON_CACHE: ${{ github.workspace }}/.cache/electron
           ELECTRON_BUILDER_CACHE: ${{ github.workspace }}/.cache/electron-builder
-          
+
       - name: Create Release
         id: create_release
         uses: softprops/action-gh-release@v1
-        if: ${{ startsWith(github.ref, 'refs/tags/') || steps.get_version.outputs.IS_BETA == 'true' || github.event.inputs.forceRelease == 'true' }}
+        if: ${{ (startsWith(github.ref, 'refs/tags/') || steps.get_version.outputs.IS_BETA == 'true' || github.event.inputs.forceRelease == 'true') && matrix.os == 'windows-latest' }}
         with:
           tag_name: ${{ steps.get_version.outputs.VERSION }}
           name: ${{ steps.get_version.outputs.IS_BETA == 'true' && 'Beta Release ' || 'Release ' }}${{ steps.get_version.outputs.VERSION }}
@@ -88,31 +112,37 @@ jobs:
             ## Changes
             ${{ github.event.head_commit.message || 'No description provided' }}
             
+            ## SHA256 Checksums
+            - Windows Installer: `${{ steps.calculate_sha.outputs.SHA256 }}`
             
             ## Release Files
             - 💻 Windows Installer: Includes everything you need to run the launcher
-            - 📝 Latest.yml: Automatic update information file
+            - 🐧 Linux AppImage: For Linux users
+            - 🍎 macOS DMG: For Mac users
+            - 📝 Latest.yml: Automatic update information file (Windows)
           files: |
             dist/*.exe
-            dist/latest.yml
+            dist/*.AppImage
+            dist/*.dmg
+            dist/latest*.yml
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # Update updates.json for beta releases
+      # Update updates.json for beta releases - only run once from Windows job
       - name: Update Beta Info in updates.json
-        if: steps.get_version.outputs.IS_BETA == 'true'
+        if: steps.get_version.outputs.IS_BETA == 'true' && matrix.os == 'windows-latest'
         shell: bash
         run: |
           # Get release info from the created release
           VERSION="${{ steps.get_version.outputs.VERSION }}"
           VERSION=${VERSION#v}  # Remove 'v' prefix if present
           RELEASE_DATE=$(date -u +"%Y-%m-%d")
-          RELEASE_NOTES="${{ steps.create_release.outputs.body || github.event.release.body }}"
-          SHA256="${{ steps.virustotal.outputs.sha256 }}"
+          RELEASE_NOTES="${{ github.event.head_commit.message || 'No description provided' }}"
+          SHA256="${{ steps.calculate_sha.outputs.SHA256 }}"
+          INSTALLER_NAME="${{ steps.calculate_sha.outputs.INSTALLER_NAME }}"
           
-          # Check if updates.json exists, create a default one if not
+          # Create the updates.json file if it doesn't exist
           if [ ! -f "updates.json" ]; then
-            echo "Creating default updates.json file"
             echo '{
               "stable": {
                 "version": "3.0.0",
@@ -131,50 +161,56 @@ jobs:
             }' > updates.json
           fi
           
-          # Find the installer filename from dist directory
-          for file in dist/*.exe; do
-            if [ -f "$file" ]; then
-              FILENAME=$(basename "$file")
-              break
-            fi
-          done
-          
           # Create the proper GitHub release asset download URL
-          DOWNLOAD_URL="https://github.com/${{ github.repository }}/releases/download/${{ steps.get_version.outputs.VERSION }}/${FILENAME}"
+          DOWNLOAD_URL="https://github.com/${{ github.repository }}/releases/download/${{ steps.get_version.outputs.VERSION }}/${INSTALLER_NAME}"
           
-          echo "Using download URL: $DOWNLOAD_URL"
+          echo "Updating updates.json with download URL: $DOWNLOAD_URL"
           
-          # Escape newlines in release notes
+          # Escape newlines in release notes for JSON
           RELEASE_NOTES=$(echo "$RELEASE_NOTES" | jq -sR .)
           
-          # Update the updates.json file
+          # Update using jq with error handling and fallback
           jq ".beta.version = \"$VERSION\" | 
               .beta.releaseDate = \"$RELEASE_DATE\" | 
               .beta.downloadUrl = \"$DOWNLOAD_URL\" | 
               .beta.sha256 = \"$SHA256\" | 
               .beta.releaseNotes = $RELEASE_NOTES" updates.json > updates.json.new || {
-            echo "jq command failed, trying alternative approach"
-            cp updates.json updates.json.bak
+            echo "jq command failed, using Python fallback"
+          
             # Create updated file using Python as fallback
-            python -c "import json, os
-            data = json.load(open('updates.json'))
-            data['beta']['version'] = '$VERSION'
-            data['beta']['releaseDate'] = '$RELEASE_DATE'
-            data['beta']['downloadUrl'] = '$DOWNLOAD_URL'
-            data['beta']['sha256'] = '$SHA256'
-            data['beta']['releaseNotes'] = '''$RELEASE_NOTES'''
-            json.dump(data, open('updates.json.new', 'w'), indent=2)"
-          }
-          
-          if [ -f "updates.json.new" ]; then
-            mv updates.json.new updates.json
-          else
-            echo "Failed to create updated updates.json file"
-            exit 1
-          fi
-          
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
-          git add updates.json
-          git commit -m "Update beta release info to ${{ steps.get_version.outputs.VERSION }}"
-          git push
+            python -c "
+  
+try:
+  with open('updates.json', 'r') as f:
+    data = json.load(f)
+
+    data['beta']['version'] = '$VERSION'
+    data['beta']['releaseDate'] = '$RELEASE_DATE'
+    data['beta']['downloadUrl'] = '$DOWNLOAD_URL'
+    data['beta']['sha256'] = '$SHA256'
+    data['beta']['releaseNotes'] = $RELEASE_NOTES
+
+  with open('updates.json.new', 'w') as f:
+    json.dump(data, f, indent=2)
+    sys.exit(0)
+except Exception as e:
+  print(f'Error updating JSON: {e}')
+    sys.exit(1)
+    "
+    }
+  
+  # Verify the file was created and move it
+    if [ -f "updates.json.new" ]; then
+    mv updates.json.new updates.json
+    echo "Successfully updated updates.json"
+    else
+      echo "Failed to create updated updates.json file"
+    exit 1
+    fi
+  
+    # Commit and push the updated file
+    git config --local user.email "action@github.com"
+    git config --local user.name "GitHub Action"
+    git add updates.json
+    git commit -m "Update beta release info to ${{ steps.get_version.outputs.VERSION }}"
+    git push

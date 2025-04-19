@@ -10,6 +10,23 @@
         // Variables to track state
         let ctrlShiftPressed = false;
         let logoutButton = null;
+        let eventHandlers = []; // Track event handlers for cleanup
+        
+        // Function to safely add event listeners with cleanup capability
+        function addSafeEventListener(element, event, handler) {
+            if (element) {
+                element.addEventListener(event, handler);
+                eventHandlers.push({ element, event, handler });
+            }
+        }
+        
+        // Function to remove all registered event listeners
+        function cleanupEventListeners() {
+            eventHandlers.forEach(({ element, event, handler }) => {
+                element.removeEventListener(event, handler);
+            });
+            eventHandlers = [];
+        }
         
         // Create a logout button that will be shown when Ctrl+Shift is pressed
         function createLogoutButton() {
@@ -22,7 +39,9 @@
             btn.id = 'direct-logout-btn';
             btn.className = 'logout-button';
             btn.textContent = 'Log Out';
-            btn.addEventListener('click', performLogout);
+            btn.style.display = 'none'; // Hide by default
+            
+            addSafeEventListener(btn, 'click', performLogout);
             
             usernameContainer.appendChild(btn);
             logoutButton = btn;
@@ -67,10 +86,19 @@
                 alert(`Logout failed: ${error.message}. Check browser console for details.`);
                 
                 // Show emergency logout as fallback
-                const emergencyBtn = document.getElementById('emergency-logout');
-                if (emergencyBtn) {
-                    emergencyBtn.style.display = 'block';
-                    emergencyBtn.addEventListener('click', forceLogout);
+                showEmergencyLogout();
+            }
+        }
+        
+        // Show emergency logout button
+        function showEmergencyLogout() {
+            const emergencyBtn = document.getElementById('emergency-logout');
+            if (emergencyBtn) {
+                emergencyBtn.style.display = 'block';
+                // Only add the event listener once
+                if (!emergencyBtn.hasAttribute('data-event-attached')) {
+                    addSafeEventListener(emergencyBtn, 'click', forceLogout);
+                    emergencyBtn.setAttribute('data-event-attached', 'true');
                 }
             }
         }
@@ -80,16 +108,32 @@
             console.log('Emergency logout triggered');
             
             // Clear any stored tokens
-            localStorage.removeItem('mc_auth_token');
-            localStorage.removeItem('msLoginState');
-            
-            // Force a page reload
-            alert('Emergency logout complete. The page will now reload.');
-            window.location.reload();
+            try {
+                localStorage.removeItem('mc_auth_token');
+                localStorage.removeItem('msLoginState');
+                // Clear any additional tokens that might be used
+                sessionStorage.removeItem('mc_auth_token');
+                
+                // Clear cookies if possible
+                document.cookie.split(';').forEach(cookie => {
+                    const [name] = cookie.trim().split('=');
+                    if (name.includes('auth') || name.includes('token') || name.includes('login')) {
+                        document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;`;
+                    }
+                });
+                
+                // Force a page reload
+                alert('Emergency logout complete. The page will now reload.');
+                window.location.reload();
+            } catch (error) {
+                console.error('Error during force logout:', error);
+                alert('Failed to complete emergency logout. Please close your browser completely.');
+            }
         }
         
-        // Keyboard event handlers
-        document.addEventListener('keydown', function(e) {
+        // Handle key combinations
+        function handleKeyDown(e) {
+            // Ctrl+Shift combination
             if ((e.ctrlKey || e.metaKey) && e.shiftKey) {
                 ctrlShiftPressed = true;
                 
@@ -115,9 +159,14 @@
                     createLogoutButton();
                 }
             }
-        });
+            
+            // Ctrl+Alt+L for emergency logout
+            if (e.ctrlKey && e.altKey && e.key === 'l') {
+                showEmergencyLogout();
+            }
+        }
         
-        document.addEventListener('keyup', function(e) {
+        function handleKeyUp(e) {
             if (!(e.ctrlKey || e.metaKey) || !e.shiftKey) {
                 ctrlShiftPressed = false;
                 
@@ -132,33 +181,81 @@
                     donationMessage.classList.remove('ctrl-shift-hover');
                 }
             }
-        });
+        }
         
-        // Emergency logout button setup
-        const emergencyBtn = document.getElementById('emergency-logout');
-        if (emergencyBtn) {
-            emergencyBtn.addEventListener('click', forceLogout);
+        // Username input click handler
+        function handleUsernameClick() {
+            if (ctrlShiftPressed && this.disabled) {
+                console.log('Username input clicked while Ctrl+Shift pressed');
+                performLogout();
+            }
+        }
+        
+        // Set up all event listeners
+        function initializeEventListeners() {
+            // Keyboard events
+            addSafeEventListener(document, 'keydown', handleKeyDown);
+            addSafeEventListener(document, 'keyup', handleKeyUp);
             
-            // Show emergency logout with special key combination
-            document.addEventListener('keydown', function(e) {
-                if (e.ctrlKey && e.altKey && e.key === 'l') {
-                    emergencyBtn.style.display = 'block';
-                }
-            });
+            // Emergency logout button
+            const emergencyBtn = document.getElementById('emergency-logout');
+            if (emergencyBtn) {
+                addSafeEventListener(emergencyBtn, 'click', forceLogout);
+                emergencyBtn.setAttribute('data-event-attached', 'true');
+            }
+            
+            // Username input events
+            const usernameInput = document.getElementById('username-input');
+            if (usernameInput) {
+                addSafeEventListener(usernameInput, 'click', handleUsernameClick);
+            }
         }
         
-        // Also handle direct clicks on the username input
-        const usernameInput = document.getElementById('username-input');
-        if (usernameInput) {
-            usernameInput.addEventListener('click', function() {
-                if (ctrlShiftPressed && this.disabled) {
-                    console.log('Username input clicked while Ctrl+Shift pressed');
-                    performLogout();
+        // Initialize component
+        function initialize() {
+            createLogoutButton();
+            initializeEventListeners();
+            
+            // Add a MutationObserver to watch for DOM changes
+            // This helps if elements we need are added dynamically
+            const observer = new MutationObserver((mutations) => {
+                const usernameContainer = document.querySelector('.username-container');
+                const usernameInput = document.getElementById('username-input');
+                
+                if ((usernameContainer && !logoutButton) || 
+                    (usernameInput && !usernameInput.hasAttribute('data-event-attached'))) {
+                    createLogoutButton();
+                    
+                    if (usernameInput && !usernameInput.hasAttribute('data-event-attached')) {
+                        addSafeEventListener(usernameInput, 'click', handleUsernameClick);
+                        usernameInput.setAttribute('data-event-attached', 'true');
+                    }
                 }
             });
+            
+            observer.observe(document.body, { 
+                childList: true, 
+                subtree: true 
+            });
+            
+            // Store the observer for cleanup
+            window._logoutObserver = observer;
         }
         
-        // Initialize by creating the logout button
-        createLogoutButton();
+        // Run initialization
+        initialize();
+        
+        // Cleanup function - attach to window for possible external usage
+        window._cleanupDirectLogout = function() {
+            cleanupEventListeners();
+            if (window._logoutObserver) {
+                window._logoutObserver.disconnect();
+                delete window._logoutObserver;
+            }
+            if (logoutButton && logoutButton.parentNode) {
+                logoutButton.parentNode.removeChild(logoutButton);
+            }
+            console.log('Direct logout handler cleaned up');
+        };
     });
 })();
