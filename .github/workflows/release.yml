@@ -78,6 +78,21 @@ jobs:
       - name: Install dependencies
         run: bun install
 
+      - name: Install Wine
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo dpkg --add-architecture i386
+          sudo apt-get update
+          sudo apt-get install -y wine wine32 wine64
+        shell: bash
+
+      - name: Build Electron app
+        run: npm run build
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ELECTRON_CACHE: ~/.cache/electron
+          ELECTRON_BUILDER_CACHE: ~/.cache/electron-builder
+
       - name: Calculate SHA256 for Windows installer
         id: calculate_sha
         if: matrix.os == 'windows-latest'
@@ -88,13 +103,6 @@ jobs:
             echo "INSTALLER_NAME=$($_.Name)" >> $env:GITHUB_OUTPUT
           }
         shell: pwsh
-
-      - name: Build Electron app
-        run: npm run build
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          ELECTRON_CACHE: ~/.cache/electron
-          ELECTRON_BUILDER_CACHE: ~/.cache/electron-builder
 
       - name: Create Release
         id: create_release
