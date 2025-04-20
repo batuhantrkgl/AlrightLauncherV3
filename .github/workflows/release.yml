@@ -151,11 +151,37 @@ jobs:
 
   release:
     needs: build
-    # Remove the condition that only runs on tags
-    if: github.event_name == 'push' && github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/v')
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/v'))
     runs-on: ubuntu-latest
     
     steps:
+      - name: Check out Git repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      # Create a tag for non-tag pushes to master
+      - name: Create tag for commit
+        if: "!startsWith(github.ref, 'refs/tags/')"
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          TAG_NAME="v${PKG_VERSION}-beta.${SHORT_SHA}"
+          
+          # Check if tag already exists
+          if ! git rev-parse "$TAG_NAME" >/dev/null 2>&1; then
+            git tag -a "$TAG_NAME" -m "Automated pre-release $TAG_NAME"
+            git push origin "$TAG_NAME"
+            echo "Created and pushed tag: $TAG_NAME"
+          else
+            echo "Tag $TAG_NAME already exists"
+          fi
+          
+          echo "TAG_NAME=$TAG_NAME" >> $GITHUB_ENV
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
@@ -168,12 +194,42 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           draft: false
-          # Make non-tag releases prerelease by default
           prerelease: ${{ !startsWith(github.ref, 'refs/tags/v') || needs.build.outputs.IS_BETA == 'true' }}
           files: artifacts/**/*
-          # For non-tag releases, use the VERSION output from build job
-          tag_name: ${{ needs.build.outputs.VERSION }}
-          name: AlrightLauncher ${{ needs.build.outputs.VERSION }}
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && needs.build.outputs.VERSION || env.TAG_NAME }}
+          name: AlrightLauncher ${{ startsWith(github.ref, 'refs/tags/') && needs.build.outputs.VERSION || env.TAG_NAME }}
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Update updates.json for the beta channel
+      - name: Update updates.json for beta releases
+        if: "!startsWith(github.ref, 'refs/tags/v') || needs.build.outputs.IS_BETA == 'true'"
+        run: |
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          TAG_NAME="${{ startsWith(github.ref, 'refs/tags/') && needs.build.outputs.VERSION || env.TAG_NAME }}"
+          VERSION="${TAG_NAME#v}"
+          DATE=$(date +"%Y-%m-%d")
+          
+          # Windows artifact path - adjust if your artifact naming is different
+          WINDOWS_ARTIFACT=$(find artifacts -name "*.exe" | head -n 1)
+          
+          if [ -n "$WINDOWS_ARTIFACT" ]; then
+            DOWNLOAD_URL="https://github.com/${{ github.repository }}/releases/download/${TAG_NAME}/$(basename $WINDOWS_ARTIFACT)"
+            
+            # Read existing updates.json
+            if [ -f updates.json ]; then
+              # Update the beta section
+              jq --arg version="$VERSION" \
+                 --arg date "$DATE" \
+                 --arg url "$DOWNLOAD_URL" \
+                 '.beta.version = $version | .beta.releaseDate = $date | .beta.downloadUrl = $url | .beta.releaseNotes = "\n"' \
+                 updates.json > updates.json.new
+              mv updates.json.new updates.json
+              
+              # Commit and push the updated file
+              git add updates.json
+              git commit -m "Update beta version to $VERSION [skip ci]"
+              git push
+            fi
+          fi
