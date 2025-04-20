@@ -208,14 +208,17 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           
-      - name: Create new nightly tag
+      # For non-tag pushes to master, create a nightly-hash tag instead of just nightly
+      - name: Create new nightly tag with commit hash
         if: "!startsWith(github.ref, 'refs/tags/v')"
         run: |
           PKG_VERSION=$(node -p "require('./package.json').version")
           SHORT_SHA=$(git rev-parse --short HEAD)
+          NIGHTLY_TAG="nightly-${SHORT_SHA}"
           echo "RELEASE_NAME=v${PKG_VERSION}-beta.${SHORT_SHA}" >> $GITHUB_ENV
-          git tag nightly
-          git push origin nightly -f
+          echo "NIGHTLY_TAG=${NIGHTLY_TAG}" >> $GITHUB_ENV
+          git tag "${NIGHTLY_TAG}"
+          git push origin "${NIGHTLY_TAG}"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -229,14 +232,14 @@ jobs:
           
           ls -la release-assets/
 
-      - name: Create/Update Nightly Release
+      - name: Create Nightly Release with commit hash
         if: "!startsWith(github.ref, 'refs/tags/v')"
         uses: softprops/action-gh-release@v1
         with:
           draft: false
           prerelease: true
-          tag_name: nightly
-          name: AlrightLauncher Nightly (${{ env.RELEASE_NAME }})
+          tag_name: ${{ env.NIGHTLY_TAG }}
+          name: AlrightLauncher ${{ env.NIGHTLY_TAG }} (${{ env.RELEASE_NAME }})
           files: release-assets/*
           body: |
             ## Nightly Build from Master Branch
@@ -247,7 +250,5 @@ jobs:
             
             ### Latest Changes
             ${{ github.event.head_commit.message }}
-            
-            *Note: This release is automatically updated with each new commit to master.*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

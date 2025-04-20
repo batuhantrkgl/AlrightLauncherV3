@@ -1,4 +1,8 @@
-# Alright Launcher
+# AlrightLauncherV3
+
+[![Build and Release](https://github.com/batuhantrkgl/AlrightLauncherV3/actions/workflows/release.yml/badge.svg)](https://github.com/batuhantrkgl/AlrightLauncherV3/actions/workflows/release.yml)[![Downloads](https://img.shields.io/github/downloads/batuhantrkgl/AlrightLauncherV3/total.svg)](https://github.com/batuhantrkgl/AlrightLauncherV3/releases)
+[![CodeFactor](https://www.codefactor.io/repository/github/batuhantrkgl/alrightlauncherv3/badge)](https://www.codefactor.io/repository/github/batuhantrkgl/alrightlauncherv3)
+[![License](https://img.shields.io/github/license/batuhantrkgl/AlrightLauncherV3.svg)](LICENSE)
 
 Yet Another Minecraft Launcher - A modern, easy-to-use Minecraft launcher built with Electron.
 
@@ -25,36 +29,30 @@ bun install    # or npm install
 
 # Start the application
 bun start     # or npm start
-
-# Build the application
-bun run bunbuild.js # or npm run build
+bun start --dev # Enables DevTools
 ```
-
-## Development Scripts
-
-- `bun start` - Start the application in development mode
-- `bun run pack` - Create an unpacked build
-- `bun run bunbuild.js` - Create a production build for Windows
-- `npm run build` - Create a production build for Windows
 
 ## Documentation
 
-### Server Management
-- Create local Minecraft servers
-- Configure server properties
-- Monitor server status and logs
-- Manage multiple servers
-
 ### Offline Mode
-- Play without authentication
-- Join multiplayer servers
-- Custom UUID generation
-- Local session handling
+- What does offline-mode settings do is making launcher completely offline. It will not download any files from the internet.
+- It will use the local files instead.
+- It will not check for updates.
 
 ### Version Management
 - Install any Minecraft version
 - Automatic dependency handling
 - Version isolation
+- Automatic Asset Index update/fixes
+
+### Mocking Auth Servers
+- This project let's you play minecraft without even having an account.
+- If you're willing to play minecraft with your microsoft account which should has minecraft puchased already, you can.
+
+### Modloader Support
+- Fabric (Guranteed)
+- Forge (Not Tested)
+- Quilt (Not Tested)
 
 ## Contributing
 
