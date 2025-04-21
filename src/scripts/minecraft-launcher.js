@@ -19,6 +19,7 @@ class MinecraftLauncher {
     this.assetsDir = path.join(baseDir, "assets");
     this.javaPath = null;
     this.runningProcesses = new Map(); // Track running game processes
+    this.authServer = null; // Initialize authServer property
     logger.info("MinecraftLauncher initialized");
     this.javaVersions = {
       legacy: {
@@ -1380,6 +1381,12 @@ class MinecraftLauncher {
     try {
       logger.info(`Launching Minecraft ${version} for user ${username}`);
       
+      // Make sure we have access to the auth server
+      if (!this.authServer && global.authServer) {
+        this.authServer = global.authServer;
+        logger.info("Using global auth server reference");
+      }
+      
       // Check if auth data was provided or if we need to request it
       let authData = options.authData;
       let offlineMode = options.offline !== false; // Default to offline mode unless explicitly set to false
@@ -1587,17 +1594,51 @@ class MinecraftLauncher {
         if (offlineMode) {
           // Only add mock auth server URLs for offline mode
           logger.info('Using offline mode with mock authentication');
-          const authPort = await this.authServer.getPort(); // Assuming you have a reference to authServer
-          jvmArgs.push(`-Dminecraft.api.auth.host=http://127.0.0.1:${authPort}`);
-          jvmArgs.push(`-Dminecraft.api.account.host=http://127.0.0.1:${authPort}`);
-          jvmArgs.push(`-Dminecraft.api.session.host=http://127.0.0.1:${authPort}`);
-          jvmArgs.push(`-Dminecraft.api.services.host=http://127.0.0.1:${authPort}`);
+          
+          // Get the global authServer reference if this.authServer is not set
+          if (!this.authServer && global.authServer) {
+            this.authServer = global.authServer;
+          }
+          
+          let authPort = null;
+          try {
+            if (this.authServer) {
+              authPort = await this.authServer.getPort();
+            }
+          } catch (err) {
+            logger.warn(`Error getting auth server port: ${err.message}`);
+          }
+          
+          const authPortFallback = "25566";
+          const portToUse = authPort || authPortFallback;
+          
+          logger.info(`Using auth server on port: ${portToUse}`);
+          
+          jvmArgs.push(`-Dminecraft.api.auth.host=http://127.0.0.1:${portToUse}`);
+          jvmArgs.push(`-Dminecraft.api.account.host=http://127.0.0.1:${portToUse}`);
+          jvmArgs.push(`-Dminecraft.api.session.host=http://127.0.0.1:${portToUse}`);
+          jvmArgs.push(`-Dminecraft.api.services.host=http://127.0.0.1:${portToUse}`);
         } else {
           logger.info('Using real Minecraft authentication - no mock servers');
         }
       } catch (error) {
         logger.error(`Error building launch arguments: ${error.message}`);
         throw new Error(`Failed to build launch arguments: ${error.message}`);
+      }
+
+      // Add a null check before accessing getPort()
+      const authServerPort = this.authServer ? await this.authServer.getPort() : null;
+      
+      // If auth server port is null, provide a fallback or handle the error
+      if (!authServerPort) {
+        logger.warn("Auth server not available, using offline mode without server");
+        // Use a default port if needed for offline mode
+        if (offlineMode) {
+          jvmArgs.push("-Dminecraft.api.auth.host=http://127.0.0.1:25566");
+          jvmArgs.push("-Dminecraft.api.account.host=http://127.0.0.1:25566");
+          jvmArgs.push("-Dminecraft.api.session.host=http://127.0.0.1:25566");
+          jvmArgs.push("-Dminecraft.api.services.host=http://127.0.0.1:25566");
+        }
       }
 
       // Find Java path with error handling

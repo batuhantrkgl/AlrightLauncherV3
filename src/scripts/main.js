@@ -80,11 +80,11 @@ let updateService = null;
 let authService = null;
 let authCleanup = null; // Add variable to store auth cleanup function
 
-function registerIpcHandlers() {
+async function registerIpcHandlers() {
     // Clear existing handlers first
     ipcMain.removeHandler('is-fullscreen');
     ipcMain.removeHandler('toggle-fullscreen');
-    
+
     // Register fullscreen handlers
     ipcMain.handle('is-fullscreen', () => {
         return mainWindow ? mainWindow.isFullScreen() : false;
@@ -103,26 +103,35 @@ function registerIpcHandlers() {
         return new Promise((resolve) => {
             try {
                 const javaProcess = spawn('java', ['-version']);
-                
+
                 javaProcess.on('error', (error) => {
                     console.log('Java not found:', error);
-                    resolve({ installed: false, message: 'No Java installed, please install "Temurin 21 JRE" and relaunch.' });
+                    resolve({
+                        installed: false,
+                        message: 'No Java installed, please install "Temurin 21 JRE" and relaunch.'
+                    });
                 });
 
                 javaProcess.stderr.on('data', (data) => {
                     console.log('Java version output:', data.toString());
-                    resolve({ installed: true, version: data.toString() });
+                    resolve({installed: true, version: data.toString()});
                 });
 
                 javaProcess.on('close', (code) => {
                     console.log('Java verification process closed with code:', code);
                     if (code !== 0) {
-                        resolve({ installed: false, message: 'No Java installed, please install "Temurin 21 JRE" and relaunch.' });
+                        resolve({
+                            installed: false,
+                            message: 'No Java installed, please install "Temurin 21 JRE" and relaunch.'
+                        });
                     }
                 });
             } catch (error) {
                 console.error('Java verification exception:', error);
-                resolve({ installed: false, message: 'No Java installed, please install "Temurin 21 JRE" and relaunch.' });
+                resolve({
+                    installed: false,
+                    message: 'No Java installed, please install "Temurin 21 JRE" and relaunch.'
+                });
             }
         });
     });
@@ -147,7 +156,7 @@ function registerIpcHandlers() {
             if (!mainWindow) throw new Error('Main window not initialized');
 
             const result = await dialog.showSaveDialog(mainWindow, {
-                filters: [{ name: 'Log Files', extensions: ['log'] }],
+                filters: [{name: 'Log Files', extensions: ['log']}],
                 defaultPath: path.join(app.getPath('downloads'), 'launcher.log')
             });
 
@@ -175,10 +184,10 @@ function registerIpcHandlers() {
     ipcMain.handle('install-version', async (event, version) => {
         try {
             logger.info(`Starting installation of Minecraft ${version}`);
-            
+
             // Update Discord RPC status to show installation
             discordRPC.setInstallingActivity(version);
-            
+
             // Notify renderer that installation has started
             if (mainWindow && !mainWindow.isDestroyed()) {
                 mainWindow.webContents.send('installation-status', {
@@ -187,18 +196,18 @@ function registerIpcHandlers() {
                     progress: 0
                 });
             }
-            
+
             const installer = new MinecraftInstaller();
-            
+
             // Set mainWindow reference if your installer needs to send progress updates
             installer.mainWindow = mainWindow;
-            
+
             // Install the version
             const result = await installer.installVersion(version);
-            
+
             // Reset Discord RPC after installation completes
             discordRPC.setDefaultActivity();
-            
+
             // Send final status to renderer
             if (mainWindow && !mainWindow.isDestroyed()) {
                 mainWindow.webContents.send('installation-status', {
@@ -208,14 +217,14 @@ function registerIpcHandlers() {
                     error: result ? null : 'Installation failed'
                 });
             }
-            
+
             return result;
         } catch (error) {
             // Reset Discord RPC on error
             discordRPC.setDefaultActivity();
-            
+
             logger.error(`Installation error for ${version}:`, error);
-            
+
             // Send error to renderer
             if (mainWindow && !mainWindow.isDestroyed()) {
                 mainWindow.webContents.send('installation-status', {
@@ -224,35 +233,47 @@ function registerIpcHandlers() {
                     error: error.message
                 });
             }
-            
+
             return false;
         }
     });
 
+    // Make sure mockAuthServer is initialized before the game launch
+    if (!mockAuthServer) {
+        mockAuthServer = new MockAuthServer(authService || null);
+        try {
+            await mockAuthServer.start();
+            logger.info(`Auth server initialized on port ${await mockAuthServer.getPort()}`);
+        } catch (error) {
+            logger.error(`Failed to start auth server: ${error.message}`);
+            // Continue without auth server - initialize a dummy one or handle the fallback
+        }
+    }
+
     ipcMain.handle('launch-game', async (event, options) => {
         try {
             logger.info(`Launch request received for Minecraft ${options.version} with username ${options.username}`);
-            
+
             // First ensure a profile exists for this version
             const ProfileCreator = require('./profile-creator');
             const profileCreator = new ProfileCreator(global.minecraftPath);
-            
+
             logger.info(`Ensuring profile exists for version ${options.version}`);
             const profileResult = await profileCreator.ensureProfileExists(options.version);
-            
+
             if (!profileResult.success) {
                 logger.warn(`Could not ensure profile for ${options.version}: ${profileResult.error}`);
                 // Continue anyway as this is not critical
             } else if (profileResult.created) {
                 logger.info(`Created new profile for ${options.version}: ${profileResult.id}`);
             }
-            
+
             // Set a timeout for the launch process
             const launchTimeout = setTimeout(() => {
                 logger.error(`Launch timed out for Minecraft ${options.version}`);
                 throw new Error('Launch operation timed out after 60 seconds');
             }, 60000); // 60 second timeout
-            
+
             if (!minecraftLauncher) {
                 const baseDir = global.minecraftPath;
                 minecraftLauncher = new MinecraftLauncher(baseDir);
@@ -261,7 +282,7 @@ function registerIpcHandlers() {
 
             // Determine if we should use online mode
             const useOnlineMode = !options.offline;
-            
+
             // If online mode is requested, get auth data
             let authData = null;
             if (useOnlineMode) {
@@ -281,42 +302,43 @@ function registerIpcHandlers() {
             const result = await minecraftLauncher.launch(options.version, options.username, {
                 ...options,
                 authData,
+                authServer: mockAuthServer,
                 offline: !authData // Set offline mode based on whether we have auth data
             });
-            
+
             // Clear the timeout since we got a response
             clearTimeout(launchTimeout);
-            
+
             if (!result) {
                 logger.error('Launch failed - no result returned');
-                return { success: false, error: 'Launch failed - no result returned from launcher' };
+                return {success: false, error: 'Launch failed - no result returned from launcher'};
             }
-            
+
             if (!result.success) {
                 logger.error(`Launch failed: ${result.error}`);
-                return { success: false, error: result.error || 'Unknown launch error' };
+                return {success: false, error: result.error || 'Unknown launch error'};
             }
 
             logger.info(`Game launched successfully with PID: ${result.pid || 'unknown'}`);
-            
+
             // Update Discord RPC when game launches
             if (result.success) {
                 discordRPC.setPlayingActivity(options.version);
             }
-            
+
             // Monitor for crashes
             if (result.process) {
                 // Store the version with the process object to use it in the close event handler
                 result.process.gameVersion = options.version;
-                
+
                 result.process.on('exit', async (code) => {
                     // Use the stored version property instead of relying on a closure variable
                     const gameVersion = result.process.gameVersion || 'unknown';
                     logger.info(`Game process exited with code ${code} for version ${gameVersion}`);
-                    
+
                     // Reset Discord RPC status when game exits
                     discordRPC.setDefaultActivity();
-                    
+
                     // Check for crash reports only on abnormal exits
                     if (code !== 0) {
                         try {
@@ -329,7 +351,7 @@ function registerIpcHandlers() {
                             logger.error(`Error checking crash reports: ${err.message}`);
                         }
                     }
-                    
+
                     // Always send game-closed event with the correct version from the process object
                     if (mainWindow && !mainWindow.isDestroyed()) {
                         mainWindow.webContents.send('game-closed', {
@@ -339,16 +361,16 @@ function registerIpcHandlers() {
                         });
                     }
                 });
-                
-                return { success: true, pid: result.pid || 0 };
+
+                return {success: true, pid: result.pid || 0};
             } else {
                 logger.warn('Game launched but no process object was returned');
-                return { success: true, warning: 'No process handle available' };
+                return {success: true, warning: 'No process handle available'};
             }
         } catch (error) {
             logger.error(`Launch error: ${error.message}`);
             logger.error(error.stack);
-            return { success: false, error: error.message };
+            return {success: false, error: error.message};
         }
     });
 
@@ -364,7 +386,7 @@ function registerIpcHandlers() {
             for (const crashDir of crashLocations) {
                 // Ensure crash directory exists
                 await fs.ensureDir(crashDir);
-                
+
                 const files = await fs.readdir(crashDir);
                 if (files.length > 0) {
                     // Get the most recent crash file
@@ -402,10 +424,10 @@ function registerIpcHandlers() {
             const response = await fetch('https://piston-meta.mojang.com/mc/game/version_manifest_v2.json');
             if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
             const data = await response.json();
-            
+
             // Sort versions by version ID (newest first)
             data.versions.sort((a, b) => compareVersions(a.id, b.id));
-            
+
             return data.versions;
         } catch (error) {
             console.error('Error fetching versions:', error);
@@ -413,12 +435,12 @@ function registerIpcHandlers() {
         }
     });
 
-    ipcMain.handle('create-standalone', async (event, { version, launcherPath }) => {
+    ipcMain.handle('create-standalone', async (event, {version, launcherPath}) => {
         try {
             const StandaloneCreator = require('./standalone-creator');
             // Use the custom minecraft path
             const creator = new StandaloneCreator(global.minecraftPath);
-            
+
             // Create AOS directory if it doesn't exist
             const defaultPath = path.join(process.env.USERPROFILE, 'Desktop', 'AOS');
             await fs.ensureDir(defaultPath);
@@ -433,7 +455,7 @@ function registerIpcHandlers() {
             });
 
             if (result.canceled) {
-                return { success: false, reason: 'cancelled' };
+                return {success: false, reason: 'cancelled'};
             }
 
             const selectedPath = result.filePaths[0];
@@ -442,14 +464,14 @@ function registerIpcHandlers() {
 
             // Create standalone version
             await creator.createStandalone(selectedPath, [version], null); // Java path is optional in offline mode
-            return { success: true };
+            return {success: true};
 
         } catch (error) {
             console.error('Failed to create standalone:', error);
-            return { 
-                success: false, 
+            return {
+                success: false,
                 reason: 'error',
-                error: error.message 
+                error: error.message
             };
         }
     });
@@ -474,17 +496,17 @@ function registerIpcHandlers() {
             return await serverManager.createServer(options);
         } catch (error) {
             console.error('Server creation error:', error);
-            return { error: error.message };
+            return {error: error.message};
         }
     });
 
-    ipcMain.handle('start-server', async (event, { name, memory }) => {
+    ipcMain.handle('start-server', async (event, {name, memory}) => {
         try {
-            if (!serverManager) return { error: 'Server manager not initialized' };
+            if (!serverManager) return {error: 'Server manager not initialized'};
             return await serverManager.startServer(name, memory);
         } catch (error) {
             console.error('Server start error:', error);
-            return { error: error.message };
+            return {error: error.message};
         }
     });
 
@@ -532,7 +554,7 @@ function registerIpcHandlers() {
             return await fileManager.verifyGameFiles(version);
         } catch (error) {
             console.error('Error verifying game files:', error);
-            return { success: false, error: error.message };
+            return {success: false, error: error.message};
         }
     });
 
@@ -544,7 +566,7 @@ function registerIpcHandlers() {
             return await fileManager.getFileStatus(version);
         } catch (error) {
             console.error('Error getting file status:', error);
-            return { error: error.message };
+            return {error: error.message};
         }
     });
 
@@ -569,7 +591,7 @@ function registerIpcHandlers() {
             return await updateService.checkForUpdates(channel);
         } catch (error) {
             console.error('Error checking for updates:', error);
-            return { error: error.message };
+            return {error: error.message};
         }
     });
 
@@ -581,7 +603,7 @@ function registerIpcHandlers() {
             return await updateService.downloadUpdate(updateInfo);
         } catch (error) {
             console.error('Error downloading update:', error);
-            return { error: error.message };
+            return {error: error.message};
         }
     });
 
@@ -593,14 +615,14 @@ function registerIpcHandlers() {
             return await updateService.installUpdate(updateInfo);
         } catch (error) {
             console.error('Error installing update:', error);
-            return { error: error.message };
+            return {error: error.message};
         }
     });
 
     // Add window management handlers
     ipcMain.handle('hide-window', () => {
         if (!mainWindow) return false;
-        
+
         // On Windows, minimize to taskbar
         if (process.platform === 'win32') {
             mainWindow.minimize();
@@ -610,14 +632,14 @@ function registerIpcHandlers() {
             // On other platforms, hide the window
             mainWindow.hide();
         }
-        
+
         console.log('Launcher hidden while game is running');
         return true;
     });
 
     ipcMain.handle('show-window', () => {
         if (!mainWindow) return false;
-        
+
         // Restore window visibility
         if (process.platform === 'win32') {
             // mainWindow.setSkipTaskbar(false);
@@ -625,7 +647,7 @@ function registerIpcHandlers() {
         } else {
             mainWindow.show();
         }
-        
+
         // Make sure window is focused
         mainWindow.focus();
         console.log('Launcher restored after game closed');
@@ -638,12 +660,12 @@ function registerIpcHandlers() {
             logger.info(`Sound repair request received for Minecraft ${version}`);
             const SoundRepairUtility = require('./sound-repair');
             const soundRepair = new SoundRepairUtility(global.minecraftPath);
-            
+
             await soundRepair.initialize();
             return await soundRepair.repairSoundsForVersion(version);
         } catch (error) {
             logger.error(`Sound repair failed: ${error.message}`);
-            return { success: false, error: error.message };
+            return {success: false, error: error.message};
         }
     });
 
@@ -652,13 +674,13 @@ function registerIpcHandlers() {
         try {
             const ProfileManager = require('./profile-manager');
             const profileManager = new ProfileManager(global.minecraftPath);
-            
+
             logger.info('Initializing ProfileManager for get-profiles');
             await profileManager.initialize();
-            
+
             const profiles = profileManager.getProfiles();
             const defaultProfile = profileManager.getDefaultProfile();
-            
+
             logger.info(`Retrieved ${Object.keys(profiles).length} profiles successfully`);
             return {
                 profiles,
@@ -667,7 +689,7 @@ function registerIpcHandlers() {
         } catch (error) {
             logger.error(`Error getting profiles: ${error.message}`);
             logger.error(error.stack);
-            return { error: error.message };
+            return {error: error.message};
         }
     });
 
@@ -679,11 +701,11 @@ function registerIpcHandlers() {
             return await profileManager.createProfile(profileData);
         } catch (error) {
             logger.error(`Error creating profile: ${error.message}`);
-            return { success: false, error: error.message };
+            return {success: false, error: error.message};
         }
     });
 
-    ipcMain.handle('update-profile', async (event, { id, profileData }) => {
+    ipcMain.handle('update-profile', async (event, {id, profileData}) => {
         try {
             const ProfileManager = require('./profile-manager');
             const profileManager = new ProfileManager(global.minecraftPath);
@@ -691,7 +713,7 @@ function registerIpcHandlers() {
             return await profileManager.updateProfile(id, profileData);
         } catch (error) {
             logger.error(`Error updating profile: ${error.message}`);
-            return { success: false, error: error.message };
+            return {success: false, error: error.message};
         }
     });
 
@@ -703,7 +725,7 @@ function registerIpcHandlers() {
             return await profileManager.deleteProfile(id);
         } catch (error) {
             logger.error(`Error deleting profile: ${error.message}`);
-            return { success: false, error: error.message };
+            return {success: false, error: error.message};
         }
     });
 
@@ -715,7 +737,7 @@ function registerIpcHandlers() {
             return await profileManager.setDefaultProfile(id);
         } catch (error) {
             logger.error(`Error setting default profile: ${error.message}`);
-            return { success: false, error: error.message };
+            return {success: false, error: error.message};
         }
     });
 
@@ -724,14 +746,14 @@ function registerIpcHandlers() {
         try {
             const ProfileManager = require('./profile-manager');
             const profileManager = new ProfileManager(global.minecraftPath);
-            
+
             logger.info('Force creating profiles via ensure-profiles-created handler');
             await profileManager.createDefaultProfiles(true); // Force recreation
-            return { success: true };
+            return {success: true};
         } catch (error) {
             logger.error(`Error ensuring profiles: ${error.message}`);
             logger.error(error.stack);
-            return { success: false, error: error.message };
+            return {success: false, error: error.message};
         }
     });
 
@@ -741,14 +763,14 @@ function registerIpcHandlers() {
             const ProfileManager = require('./profile-manager');
             const profileManager = new ProfileManager(global.minecraftPath);
             await profileManager.initialize();
-            
+
             logger.info(`Importing Minecraft profiles${customPath ? ' from custom path' : ''}`);
             const result = await profileManager.importMinecraftProfiles(customPath);
-            
+
             return result;
         } catch (error) {
             logger.error(`Error importing profiles: ${error.message}`);
-            return { success: false, error: error.message };
+            return {success: false, error: error.message};
         }
     });
 
@@ -758,20 +780,20 @@ function registerIpcHandlers() {
             const result = await dialog.showOpenDialog(mainWindow, {
                 title: 'Select launcher_profiles.json',
                 filters: [
-                    { name: 'JSON Files', extensions: ['json'] },
-                    { name: 'All Files', extensions: ['*'] }
+                    {name: 'JSON Files', extensions: ['json']},
+                    {name: 'All Files', extensions: ['*']}
                 ],
                 properties: ['openFile']
             });
-            
+
             if (result.canceled) {
-                return { canceled: true };
+                return {canceled: true};
             }
-            
-            return { canceled: false, path: result.filePaths[0] };
+
+            return {canceled: false, path: result.filePaths[0]};
         } catch (error) {
             logger.error(`Error in profile path selection: ${error.message}`);
-            return { canceled: true, error: error.message };
+            return {canceled: true, error: error.message};
         }
     });
 
@@ -809,45 +831,45 @@ function registerIpcHandlers() {
         }
     });
 
-    ipcMain.handle('install-fabric', async (event, { minecraftVersion, loaderVersion }) => {
+    ipcMain.handle('install-fabric', async (event, {minecraftVersion, loaderVersion}) => {
         try {
             const ModLoaderManager = require('./modloader-manager');
             const modLoaderManager = new ModLoaderManager(global.minecraftPath);
-            
+
             const success = await modLoaderManager.installFabric(minecraftVersion, loaderVersion);
-            
+
             if (success) {
                 // Create a profile for the new installation
                 const ProfileManager = require('./profile-manager');
                 const profileManager = new ProfileManager(global.minecraftPath);
                 await profileManager.createFabricProfile(minecraftVersion, loaderVersion);
             }
-            
-            return { success };
+
+            return {success};
         } catch (error) {
             logger.error(`Error installing Fabric: ${error.message}`);
-            return { success: false, error: error.message };
+            return {success: false, error: error.message};
         }
     });
 
-    ipcMain.handle('install-forge', async (event, { minecraftVersion, forgeVersion }) => {
+    ipcMain.handle('install-forge', async (event, {minecraftVersion, forgeVersion}) => {
         try {
             const ModLoaderManager = require('./modloader-manager');
             const modLoaderManager = new ModLoaderManager(global.minecraftPath);
-            
+
             const success = await modLoaderManager.installForge(minecraftVersion, forgeVersion);
-            
+
             if (success) {
                 // Create a profile for the new installation
                 const ProfileManager = require('./profile-manager');
                 const profileManager = new ProfileManager(global.minecraftPath);
                 await profileManager.createForgeProfile(minecraftVersion, forgeVersion);
             }
-            
-            return { success };
+
+            return {success};
         } catch (error) {
             logger.error(`Error installing Forge: ${error.message}`);
-            return { success: false, error: error.message };
+            return {success: false, error: error.message};
         }
     });
 
@@ -856,12 +878,12 @@ function registerIpcHandlers() {
         try {
             const AssetManager = require('./asset-manager');
             const assetManager = new AssetManager(global.minecraftPath);
-            
+
             await assetManager.initialize();
-            
+
             // First download the asset index
             await assetManager.downloadAssetIndex(version);
-            
+
             // Then start downloading assets
             const result = await assetManager.downloadAssets(version, (progress) => {
                 // Send progress updates to the renderer
@@ -869,11 +891,11 @@ function registerIpcHandlers() {
                     mainWindow.webContents.send('asset-download-progress', progress);
                 }
             });
-            
+
             return result;
         } catch (error) {
             logger.error(`Error downloading assets: ${error.message}`);
-            return { success: false, error: error.message };
+            return {success: false, error: error.message};
         }
     });
 
@@ -881,7 +903,7 @@ function registerIpcHandlers() {
         try {
             const AssetManager = require('./asset-manager');
             const assetManager = new AssetManager(global.minecraftPath);
-            
+
             await assetManager.initialize();
             return await assetManager.setupGameIcons(version);
         } catch (error) {
@@ -895,17 +917,17 @@ function registerIpcHandlers() {
         try {
             const ProfileCreator = require('./profile-creator');
             const profileCreator = new ProfileCreator(global.minecraftPath);
-            
+
             logger.info('Checking for missing profiles for installed versions');
             return await profileCreator.createMissingProfiles();
         } catch (error) {
             logger.error(`Error creating missing profiles: ${error.message}`);
-            return { success: false, error: error.message };
+            return {success: false, error: error.message};
         }
     });
 
     // Add simulation mode handlers
-    ipcMain.handle('toggle-update-simulation', async (event, { enable, options = {} }) => {
+    ipcMain.handle('toggle-update-simulation', async (event, {enable, options = {}}) => {
         try {
             if (!updateService) {
                 updateService = new UpdateService();
@@ -913,10 +935,10 @@ function registerIpcHandlers() {
             return await updateService.toggleSimulationMode(enable, options);
         } catch (error) {
             logger.error('Error toggling simulation mode:', error);
-            return { success: false, error: error.message };
+            return {success: false, error: error.message};
         }
     });
-    
+
     ipcMain.handle('get-simulation-status', async () => {
         try {
             if (!updateService) {
@@ -928,7 +950,7 @@ function registerIpcHandlers() {
             };
         } catch (error) {
             logger.error('Error getting simulation status:', error);
-            return { enabled: false, error: error.message };
+            return {enabled: false, error: error.message};
         }
     });
 
@@ -938,7 +960,7 @@ function registerIpcHandlers() {
             const os = require('os');
             const totalMemoryBytes = os.totalmem();
             const totalMemoryMB = Math.floor(totalMemoryBytes / (1024 * 1024));
-            
+
             return {
                 totalMemoryMB,
                 freeMemoryMB: Math.floor(os.freemem() / (1024 * 1024)),
@@ -962,51 +984,51 @@ function registerIpcHandlers() {
             if (!authService) {
                 authService = new AuthService();
             }
-            
+
             const profile = await authService.login();
-            
+
             // Send profile update to all windows
             BrowserWindow.getAllWindows().forEach(win => {
                 if (!win.isDestroyed()) {
                     win.webContents.send('profile-updated', profile);
                 }
             });
-            
+
             return profile;
         } catch (error) {
             logger.error('Authentication failed:', error);
-            return { error: error.message };
+            return {error: error.message};
         }
     });
-    
+
     ipcMain.handle('logout', async () => {
         try {
             if (!authService) {
                 authService = new AuthService();
             }
-            
+
             const result = await authService.logout();
-            
+
             // Send profile update to all windows
             BrowserWindow.getAllWindows().forEach(win => {
                 if (!win.isDestroyed()) {
                     win.webContents.send('profile-updated', null);
                 }
             });
-            
+
             return result;
         } catch (error) {
             logger.error('Logout failed:', error);
             return false;
         }
     });
-    
+
     ipcMain.handle('get-profile', async () => {
         try {
             if (!authService) {
                 authService = new AuthService();
             }
-            
+
             return authService.getProfile();
         } catch (error) {
             logger.error('Get profile failed:', error);
@@ -1020,7 +1042,7 @@ function registerIpcHandlers() {
             // Validate URL to prevent security issues
             const validUrl = new URL(url);
             const allowedProtocols = ['https:', 'http:'];
-            
+
             if (allowedProtocols.includes(validUrl.protocol)) {
                 await shell.openExternal(url);
                 return true;
