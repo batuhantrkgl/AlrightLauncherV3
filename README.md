@@ -35,7 +35,7 @@ bun start --dev # Enables DevTools
 ## Documentation
 
 ### Offline Mode
-- What does offline-mode settings do is making launcher completely offline. It will not download any files from the internet.
+- What offline-mode settings does is it makes launcher completely offline. It will not download any files from the internet.
 - It will use the local files instead.
 - It will not check for updates.
 
@@ -46,8 +46,8 @@ bun start --dev # Enables DevTools
 - Automatic Asset Index update/fixes
 
 ### Mocking Auth Servers
-- This project let's you play minecraft without even having an account.
-- If you're willing to play minecraft with your microsoft account which should has minecraft puchased already, you can.
+- This project lets you play minecraft without even having an account.
+- If you're willing to play minecraft with your microsoft account which has minecraft puchased already, you can.
 
 ### Modloader Support
 - Fabric (Guranteed)
