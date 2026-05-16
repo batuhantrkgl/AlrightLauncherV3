@@ -47,7 +47,7 @@ bun start --dev # Enables DevTools
 
 ### Mocking Auth Servers
 - This project lets you play minecraft without even having an account.
-- If you're willing to play minecraft with your microsoft account which has minecraft puchased already, you can.
+- If you're willing to play Minecraft with your Microsoft account which has Minecraft purchased already, you can.
 
 ### Modloader Support
 - Fabric (Guranteed)
