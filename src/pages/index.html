@@ -18,32 +18,16 @@
             width: 100%;
             height: 100%;
             background: rgba(0, 0, 0, 0.7);
-            backdrop-filter: blur(5px);
             z-index: 2000;
             justify-content: center;
             align-items: center;
         }
 
         .settings-content {
-            background: var(--panel-bg);
             border-radius: 15px;
             padding: 2rem;
             width: 90%;
             overflow-y: auto;
-        }
-
-        /* Progress Overlay Styles */
-        .progress-overlay {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background-color: rgba(0, 0, 0, 0.7);
-            display: none;
-            justify-content: center;
-            align-items: center;
-            z-index: 9999;
         }
 
         .progress-modal {
@@ -106,6 +90,13 @@
             <a id="donation-message" href="https://t.me/nippongsi/8173" class="external-link">Do you like our Launcher? We won't charge you for any features, but we would be grateful if you could give a little support to our good friend Nippon in Gaza who needs help.</a>
             <input type="text" id="username-input" value="Player" spellcheck="false">
             <!-- Microsoft login button will be added by JavaScript -->
+            <div class="account-switcher" id="accountSwitcher" style="display:none;">
+                <div class="account-switcher-header">
+                    <span>Saved Accounts</span>
+                    <button class="account-add-btn" id="accountAddBtn">+ Add</button>
+                </div>
+                <div class="account-list" id="accountList"></div>
+            </div>
         </div>
     </div>
 
@@ -143,219 +134,607 @@
         <div class="settings-content">
             <div class="settings-header">
                 <h2>Settings</h2>
-                <button class="settings-close">✕</button>
+                <button class="modal-close">&times;</button>
             </div>
 
-            <!-- Add tabs navigation -->
             <div class="settings-tabs">
-                <button class="settings-tab active" data-tab="game-settings">Game Settings</button>
-                <button class="settings-tab" data-tab="launcher-settings">Launcher Settings</button>
-                <button class="settings-tab" data-tab="server-settings">Server Settings</button>
-                <button class="settings-tab" data-tab="advanced-settings">Advanced Settings</button>
+                <button class="settings-tab active" data-tab="tab-game">Game</button>
+                <button class="settings-tab" data-tab="tab-appearance">Appearance</button>
+                <button class="settings-tab" data-tab="tab-servers">Servers</button>
+                <button class="settings-tab" data-tab="tab-advanced">Advanced</button>
             </div>
 
-            <!-- Game Settings Tab -->
-            <div id="game-settings" class="tab-content active">
+            <!-- Game Tab -->
+            <div id="tab-game" class="tab-content active">
                 <div class="settings-section">
-                    <h3>Memory Settings</h3>
+                    <h3>Memory</h3>
                     <div class="setting-item">
-                        <label>Maximum RAM: <span id="ram-value">2048</span> MB</label>
-                        <input type="range" class="memory-slider" min="1024" max="16384" step="512" value="2048" id="ram-slider">
+                        <div class="setting-row">
+                            <label>Minimum RAM</label>
+                            <span class="setting-value" id="game-min-ram-value">512 MB</span>
+                        </div>
+                        <input type="range" class="memory-slider" min="256" max="8192" step="128" value="512" id="game-min-ram">
+                    </div>
+                    <div class="setting-item">
+                        <div class="setting-row">
+                            <label>Maximum RAM</label>
+                            <span class="setting-value" id="ram-value">2048 MB</span>
+                        </div>
+                        <input type="range" class="memory-slider" min="1024" max="32768" step="512" value="2048" id="ram-slider">
                     </div>
                 </div>
                 <div class="settings-section">
-                    <h3>Game Settings</h3>
+                    <h3>Display</h3>
                     <div class="setting-item">
-                        <label>Full Screen</label>
-                        <label class="theme-switch">
-                            <input type="checkbox" id="fullscreen-toggle">
-                            <span class="slider"></span>
-                        </label>
+                        <div class="setting-row">
+                            <label>Window Width</label>
+                            <input type="number" id="game-win-width" class="setting-num-input" value="854" min="400" max="7680" step="1">
+                        </div>
                     </div>
                     <div class="setting-item">
-                        <label>Offline Mode</label>
-                        <label class="theme-switch">
-                            <input type="checkbox" id="offline-toggle">
-                            <span class="slider"></span>
-                        </label>
+                        <div class="setting-row">
+                            <label>Window Height</label>
+                            <input type="number" id="game-win-height" class="setting-num-input" value="480" min="300" max="4320" step="1">
+                        </div>
                     </div>
                     <div class="setting-item">
-                        <label>Skip File Verification</label>
-                        <label class="theme-switch">
-                            <input type="checkbox" id="skip-verification-toggle">
-                            <span class="slider"></span>
-                        </label>
+                        <div class="setting-row">
+                            <label>Fullscreen</label>
+                            <label class="toggle">
+                                <input type="checkbox" id="fullscreen-toggle">
+                                <span class="toggle-track"></span>
+                            </label>
+                        </div>
+                        <p class="setting-hint">Start Minecraft in full screen mode</p>
                     </div>
                 </div>
+                <div class="settings-section">
+                    <h3>Server</h3>
+                    <div class="setting-item">
+                        <div class="setting-row">
+                            <label>Auto-Join Server Address</label>
+                        </div>
+                        <input type="text" id="game-server-address" class="setting-text-input" placeholder="mc.example.com" style="margin-top:0.4rem;">
+                        <p class="setting-hint">Skip the title screen and connect to this server on launch</p>
+                    </div>
+                    <div class="setting-item">
+                        <div class="setting-row">
+                            <label>Server Port</label>
+                            <input type="number" id="game-server-port" class="setting-num-input" value="25565" min="1" max="65535">
+                        </div>
+                    </div>
+                </div>
+                <div class="settings-section">
+                    <h3>Launch</h3>
+                    <div class="setting-item">
+                        <label>Game Arguments</label>
+                        <input type="text" id="game-args" class="setting-text-input" placeholder="--demo --quickPlayMultiplayer">
+                        <p class="setting-hint">Additional flags passed to the Minecraft client</p>
+                    </div>
+                    <div class="setting-item">
+                        <div class="setting-row">
+                            <label>Skip Title Screen</label>
+                            <label class="toggle">
+                                <input type="checkbox" id="game-skip-title">
+                                <span class="toggle-track"></span>
+                            </label>
+                        </div>
+                        <p class="setting-hint">Go directly to the world/server screen</p>
+                    </div>
+                    <div class="setting-item">
+                        <div class="setting-row">
+                            <label>Demo Mode</label>
+                            <label class="toggle">
+                                <input type="checkbox" id="game-demo-mode">
+                                <span class="toggle-track"></span>
+                            </label>
+                        </div>
+                        <p class="setting-hint">Launch the demo version of Minecraft</p>
+                    </div>
+                    <div class="setting-item">
+                        <div class="setting-row">
+                            <label>Native Launcher</label>
+                            <label class="toggle">
+                                <input type="checkbox" id="game-native-launcher">
+                                <span class="toggle-track"></span>
+                            </label>
+                        </div>
+                        <p class="setting-hint">Use the legacy native launcher for older versions</p>
+                    </div>
+                    <div class="setting-item">
+                        <div class="setting-row">
+                            <label>Offline Mode</label>
+                            <label class="toggle">
+                                <input type="checkbox" id="offline-toggle">
+                                <span class="toggle-track"></span>
+                            </label>
+                        </div>
+                        <p class="setting-hint">Skip online authentication and play offline</p>
+                    </div>
+                    <div class="setting-item">
+                        <div class="setting-row">
+                            <label>Skip File Verification</label>
+                            <label class="toggle">
+                                <input type="checkbox" id="skip-verification-toggle">
+                                <span class="toggle-track"></span>
+                            </label>
+                        </div>
+                        <p class="setting-hint">Bypass file integrity checks in offline mode</p>
+                    </div>
+                </div>
+
             </div>
 
-            <!-- Launcher Settings Tab -->
-            <div id="launcher-settings" class="tab-content">
-                
+            <!-- Appearance Tab -->
+            <div id="tab-appearance" class="tab-content">
                 <div class="settings-section">
-                    <h3>Appearance</h3>
-                    <div class="setting-item">
-                        <label>Theme</label>
-                        <div class="theme-preview-container">
-                            <div class="theme-preview" data-theme="light" title="Light (Default)">
-                                <div class="preview-color light-primary"></div>
-                                <div class="preview-color light-secondary"></div>
-                            </div>
-                            <div class="theme-preview" data-theme="dark" title="Dark">
-                                <div class="preview-color dark-primary"></div>
-                                <div class="preview-color dark-secondary"></div>
-                            </div>
-                            <div class="theme-preview" data-theme="gold-olive" title="Pale Gold & Dark Olive">
-                                <div class="preview-color gold-primary"></div>
-                                <div class="preview-color olive-secondary"></div>
-                            </div>
-                            <!-- Add more theme previews as needed -->
-                            <div class="theme-preview" data-theme="teal-ivory" title="Cool Teal & Ivory White">
-                                <div class="preview-color teal-primary"></div>
-                                <div class="preview-color ivory-secondary"></div>
-                            </div>
-                            <div class="theme-preview" data-theme="plum-green" title="Deep Plum & Soft Green">
-                                <div class="preview-color plum-primary"></div>
-                                <div class="preview-color green-secondary"></div>
-                            </div>
-                            <div class="theme-preview" data-theme="antique-puce" title="Antique White & Puce">
-                                <div class="preview-color puce-primary"></div>
-                                <div class="preview-color antique-secondary"></div>
-                            </div>
-                            <div class="theme-preview" data-theme="beige-tan" title="Soft Beige & Muted Tan">
-                                <div class="preview-color tan-primary"></div>
-                                <div class="preview-color beige-secondary"></div>
-                            </div>
-                            <div class="theme-preview" data-theme="charcoal-lilac" title="Deep Charcoal & Muted Lilac">
-                                <div class="preview-color lilac-primary"></div>
-                                <div class="preview-color charcoal-secondary"></div>
-                            </div>
-                            <div class="theme-preview" data-theme="coffee-gray" title="Coffee Brown & Silver Gray">
-                                <div class="preview-color coffee-primary"></div>
-                                <div class="preview-color gray-secondary"></div>
-                            </div>
-                            <div class="theme-preview" data-theme="coral-ruby" title="Fiery Coral & Dark Ruby">
-                                <div class="preview-color coral-primary"></div>
-                                <div class="preview-color ruby-secondary"></div>
-                            </div>
+                    <h3>Theme</h3>
+                    <div class="theme-grid">
+                        <div class="theme-card" data-theme="light" title="Light (Default)">
+                            <div class="theme-swatch light-primary"></div>
+                            <span class="theme-name">Light</span>
+                        </div>
+                        <div class="theme-card" data-theme="dark" title="Dark">
+                            <div class="theme-swatch dark-primary"></div>
+                            <span class="theme-name">Dark</span>
+                        </div>
+                        <div class="theme-card" data-theme="gold-olive" title="Pale Gold & Dark Olive">
+                            <div class="theme-swatch gold-primary"></div>
+                            <span class="theme-name">Gold</span>
+                        </div>
+                        <div class="theme-card" data-theme="teal-ivory" title="Cool Teal & Ivory White">
+                            <div class="theme-swatch teal-primary"></div>
+                            <span class="theme-name">Teal</span>
+                        </div>
+                        <div class="theme-card" data-theme="plum-green" title="Deep Plum & Soft Green">
+                            <div class="theme-swatch plum-primary"></div>
+                            <span class="theme-name">Plum</span>
+                        </div>
+                        <div class="theme-card" data-theme="antique-puce" title="Antique White & Puce">
+                            <div class="theme-swatch puce-primary"></div>
+                            <span class="theme-name">Antique</span>
+                        </div>
+                        <div class="theme-card" data-theme="beige-tan" title="Soft Beige & Muted Tan">
+                            <div class="theme-swatch tan-primary"></div>
+                            <span class="theme-name">Beige</span>
+                        </div>
+                        <div class="theme-card" data-theme="charcoal-lilac" title="Deep Charcoal & Muted Lilac">
+                            <div class="theme-swatch lilac-primary"></div>
+                            <span class="theme-name">Charcoal</span>
+                        </div>
+                        <div class="theme-card" data-theme="coffee-gray" title="Coffee Brown & Silver Gray">
+                            <div class="theme-swatch coffee-primary"></div>
+                            <span class="theme-name">Coffee</span>
+                        </div>
+                        <div class="theme-card" data-theme="coral-ruby" title="Fiery Coral & Dark Ruby">
+                            <div class="theme-swatch coral-primary"></div>
+                            <span class="theme-name">Coral</span>
+                        </div>
+                        <div class="theme-card" data-theme="sky-ocean" title="Sky Blue & Deep Ocean">
+                            <div class="theme-swatch sky-primary"></div>
+                            <span class="theme-name">Sky</span>
+                        </div>
+                        <div class="theme-card" data-theme="crimson-cream" title="Crimson & Cream">
+                            <div class="theme-swatch crimson-primary"></div>
+                            <span class="theme-name">Crimson</span>
+                        </div>
+                        <div class="theme-card" data-theme="lavender-blush" title="Lavender & Blush">
+                            <div class="theme-swatch lavender-primary"></div>
+                            <span class="theme-name">Lavender</span>
+                        </div>
+                        <div class="theme-card" data-theme="forest-sand" title="Forest & Sand">
+                            <div class="theme-swatch forest-primary"></div>
+                            <span class="theme-name">Forest</span>
+                        </div>
+                        <div class="theme-card" data-theme="slate-white" title="Slate & White">
+                            <div class="theme-swatch slate-primary"></div>
+                            <span class="theme-name">Slate</span>
+                        </div>
+                        <div class="theme-card" data-theme="denim-ice" title="Denim & Ice">
+                            <div class="theme-swatch denim-primary"></div>
+                            <span class="theme-name">Denim</span>
+                        </div>
+                        <div class="theme-card" data-theme="sage-linen" title="Sage & Linen">
+                            <div class="theme-swatch sage-primary"></div>
+                            <span class="theme-name">Sage</span>
+                        </div>
+                        <div class="theme-card" data-theme="peach-marmalade" title="Peach & Marmalade">
+                            <div class="theme-swatch peach-primary"></div>
+                            <span class="theme-name">Peach</span>
+                        </div>
+                        <div class="theme-card" data-theme="rose-quartz" title="Rose & Quartz">
+                            <div class="theme-swatch rose-primary"></div>
+                            <span class="theme-name">Rose</span>
+                        </div>
+                        <div class="theme-card" data-theme="cobalt-steel" title="Cobalt & Steel">
+                            <div class="theme-swatch cobalt-primary"></div>
+                            <span class="theme-name">Cobalt</span>
+                        </div>
+                        <div class="theme-card" data-theme="terra-cotta" title="Terra Cotta & Sand">
+                            <div class="theme-swatch terra-primary"></div>
+                            <span class="theme-name">Terra</span>
+                        </div>
+                        <div class="theme-card" data-theme="honey-umber" title="Honey & Umber">
+                            <div class="theme-swatch honey-primary"></div>
+                            <span class="theme-name">Honey</span>
+                        </div>
+                        <div class="theme-card" data-theme="mauve-eggplant" title="Mauve & Eggplant">
+                            <div class="theme-swatch mauve-primary"></div>
+                            <span class="theme-name">Mauve</span>
+                        </div>
+                        <div class="theme-card" data-theme="jungle-emerald" title="Jungle & Emerald">
+                            <div class="theme-swatch jungle-primary"></div>
+                            <span class="theme-name">Jungle</span>
+                        </div>
+                        <div class="theme-card" data-theme="indigo-pearl" title="Indigo & Pearl">
+                            <div class="theme-swatch indigo-primary"></div>
+                            <span class="theme-name">Indigo</span>
+                        </div>
+                        <div class="theme-card" data-theme="rust-mustard" title="Rust & Mustard">
+                            <div class="theme-swatch rust-primary"></div>
+                            <span class="theme-name">Rust</span>
+                        </div>
+                        <div class="theme-card" data-theme="cherry-blossom" title="Cherry Blossom & White">
+                            <div class="theme-swatch cherry-primary"></div>
+                            <span class="theme-name">Cherry</span>
+                        </div>
+                        <div class="theme-card" data-theme="moss-stone" title="Moss & Stone">
+                            <div class="theme-swatch moss-primary"></div>
+                            <span class="theme-name">Moss</span>
+                        </div>
+                        <div class="theme-card" data-theme="midnight-silver" title="Midnight & Silver">
+                            <div class="theme-swatch midnight-primary"></div>
+                            <span class="theme-name">Midnight</span>
+                        </div>
+                        <div class="theme-card" data-theme="wine-gold" title="Wine & Gold">
+                            <div class="theme-swatch wine-primary"></div>
+                            <span class="theme-name">Wine</span>
+                        </div>
+                        <div class="theme-card" data-theme="seafoam-sand" title="Seafoam & Sand">
+                            <div class="theme-swatch seafoam-primary"></div>
+                            <span class="theme-name">Seafoam</span>
+                        </div>
+                        <div class="theme-card" data-theme="sunset-dusk" title="Sunset & Dusk">
+                            <div class="theme-swatch sunset-primary"></div>
+                            <span class="theme-name">Sunset</span>
                         </div>
                     </div>
                 </div>
             </div>
 
-            <!-- Server Settings Tab -->
-            <div id="server-settings" class="tab-content">
+            <!-- Servers Tab -->
+            <div id="tab-servers" class="tab-content">
+                <div class="server-status-panel">
+                    <div class="server-list" id="serverList">
+                        <div class="server-list-header">
+                            <h4>Servers</h4>
+                        </div>
+                    </div>
+                    <div class="server-logs">
+                        <div class="log-header">
+                            <h4 id="logHeader">Console</h4>
+                            <button class="clear-logs">Clear</button>
+                        </div>
+                        <pre class="log-content" id="serverLogContent"></pre>
+                    </div>
+                </div>
                 <div class="server-creator">
-                    <h3>Local Server</h3>
-                    <div class="server-status-panel">
-                        <div class="server-list" id="serverList">
-                            <!-- Servers will be listed here dynamically -->
-                        </div>
-                        <div class="server-logs" id="serverLogs">
-                            <div class="log-header">
-                                <h4>Server Logs</h4>
-                                <button class="clear-logs">Clear</button>
-                            </div>
-                            <pre class="log-content" id="serverLogContent"></pre>
-                        </div>
-                    </div>
-                    <div class="server-config">
-                        <h4>Server Configuration</h4>
-                        <form class="server-form" id="serverForm">
+                    <h4>Create Server</h4>
+                    <form class="server-form" id="serverForm">
+                        <div class="server-form-row">
                             <input type="text" placeholder="Server Name" id="serverName" required>
-                            <input type="number" placeholder="Port (default: 25565)" id="serverPort" value="25565">
                             <select id="serverVersion" required>
-                                <!-- Versions loaded dynamically -->
+                                <option value="" disabled selected>Select version</option>
                             </select>
-                            <div class="server-settings">
-                                <div class="setting-group">
-                                    <label>Server Memory (MB)</label>
-                                    <input type="number" id="serverMemory" value="2048" min="512" step="512">
-                                </div>
-                                <div class="setting-group">
-                                    <label>Max Players</label>
-                                    <input type="number" id="maxPlayers" value="20" min="1">
-                                </div>
-                                <div class="setting-group">
-                                    <label>View Distance</label>
-                                    <input type="number" id="viewDistance" value="10" min="3" max="32">
-                                </div>
-                                <div class="setting-group">
-                                    <label>Difficulty</label>
-                                    <select id="difficulty">
-                                        <option value="peaceful">Peaceful</option>
-                                        <option value="easy">Easy</option>
-                                        <option value="normal" selected>Normal</option>
-                                        <option value="hard">Hard</option>
-                                    </select>
-                                </div>
-                                <div class="setting-group">
-                                    <label>Game Mode</label>
-                                    <select id="gamemode">
-                                        <option value="survival" selected>Survival</option>
-                                        <option value="creative">Creative</option>
-                                        <option value="adventure">Adventure</option>
-                                    </select>
-                                </div>
-                                <div class="setting-checks">
-                                    <label>
-                                        <input type="checkbox" id="pvp" checked>
-                                        Enable PvP
-                                    </label>
-                                    <label>
-                                        <input type="checkbox" id="spawnAnimals" checked>
-                                        Spawn Animals
-                                    </label>
-                                    <label>
-                                        <input type="checkbox" id="spawnMonsters" checked>
-                                        Spawn Monsters
-                                    </label>
-                                </div>
+                        </div>
+                        <div class="server-form-row">
+                            <div class="server-form-group">
+                                <label>Port</label>
+                                <input type="number" id="serverPort" value="25565">
                             </div>
-                            <button type="submit" class="settings-button">Create Server</button>
-                        </form>
-                    </div>
+                            <div class="server-form-group">
+                                <label>Memory (MB)</label>
+                                <input type="number" id="serverMemory" value="2048" min="512" step="512">
+                            </div>
+                            <div class="server-form-group">
+                                <label>Max Players</label>
+                                <input type="number" id="maxPlayers" value="20" min="1">
+                            </div>
+                            <div class="server-form-group">
+                                <label>View Distance</label>
+                                <input type="number" id="viewDistance" value="10" min="3" max="32">
+                            </div>
+                        </div>
+                        <div class="server-form-row">
+                            <div class="server-form-group">
+                                <label>Difficulty</label>
+                                <select id="difficulty">
+                                    <option value="peaceful">Peaceful</option>
+                                    <option value="easy">Easy</option>
+                                    <option value="normal" selected>Normal</option>
+                                    <option value="hard">Hard</option>
+                                </select>
+                            </div>
+                            <div class="server-form-group">
+                                <label>Game Mode</label>
+                                <select id="gamemode">
+                                    <option value="survival" selected>Survival</option>
+                                    <option value="creative">Creative</option>
+                                    <option value="adventure">Adventure</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="server-form-checks">
+                            <label><input type="checkbox" id="pvp" checked> PvP</label>
+                            <label><input type="checkbox" id="spawnAnimals" checked> Animals</label>
+                            <label><input type="checkbox" id="spawnMonsters" checked> Monsters</label>
+                        </div>
+                        <button type="submit" class="settings-button">Create Server</button>
+                    </form>
                 </div>
             </div>
 
-            <!-- Advanced Settings Tab -->
-            <div id="advanced-settings" class="tab-content">
-                <div class="modloader-section">
-                    <h3>Mod Loaders</h3>
-                    <div class="modloader-card" id="forge">
-                        <h4>Forge</h4>
-                        <p>Traditional modding platform</p>
+            <!-- Advanced Tab -->
+            <div id="tab-advanced" class="tab-content">
+
+                <div class="settings-section">
+                    <h3>Java & Memory</h3>
+                    <div class="setting-item">
+                        <div class="setting-row">
+                            <label>Minimum RAM</label>
+                            <span class="setting-value" id="adv-min-ram-value">512 MB</span>
+                        </div>
+                        <input type="range" class="memory-slider" min="256" max="8192" step="128" value="512" id="adv-min-ram">
                     </div>
-                    <div class="modloader-card" id="fabric">
-                        <h4>Fabric</h4>
-                        <p>Lightweight modern modding</p>
+                    <div class="setting-item">
+                        <div class="setting-row">
+                            <label>Maximum RAM</label>
+                            <span class="setting-value" id="adv-max-ram-value">2048 MB</span>
+                        </div>
+                        <input type="range" class="memory-slider" min="1024" max="32768" step="512" value="2048" id="adv-max-ram">
+                    </div>
+                    <div class="setting-item">
+                        <div class="setting-row">
+                            <label>GC Algorithm</label>
+                            <select class="setting-select" id="gcType">
+                                <option value="G1GC">G1GC (Default)</option>
+                                <option value="ZGC">ZGC (Low Pause)</option>
+                                <option value="Shenandoah">Shenandoah</option>
+                                <option value="Parallel">Parallel</option>
+                                <option value="Serial">Serial</option>
+                                <option value="Custom">Custom (from flags)</option>
+                            </select>
+                        </div>
+                        <p class="setting-hint">Garbage collector algorithm for Java — affects performance</p>
+                    </div>
+                    <div class="setting-item">
+                        <div class="setting-row">
+                            <label>Java Executable</label>
+                            <span class="setting-hint" style="margin:0;font-size:0.75rem;">Leave blank for auto</span>
+                        </div>
+                        <div style="display:flex;gap:0.5rem;margin-top:0.5rem;">
+                            <input type="text" id="javaPath" class="setting-text-input" placeholder="C:\Program Files\Java\bin\javaw.exe" style="flex:1;">
+                            <button id="detectJavaBtn" class="settings-button" style="white-space:nowrap;padding:0.6rem 1rem;font-size:0.8rem;">Auto</button>
+                        </div>
+                    </div>
+                    <div class="setting-item">
+                        <label>Additional JVM Flags</label>
+                        <input type="text" id="jvmArgs" class="setting-text-input" placeholder="-XX:+UseG1GC -XX:MaxGCPauseMillis=50">
+                        <p class="setting-hint">Space-separated flags passed to the Java runtime</p>
                     </div>
                 </div>
 
                 <div class="settings-section">
-                    <h3>Portable Version</h3>
+                    <h3>Game</h3>
                     <div class="setting-item">
-                        <button id="createStandalone" class="settings-button">
-                            Create Standalone USB Media
-                        </button>
-                        <p class="setting-description">
-                            Creates a portable version with selected game version and Java runtime
-                        </p>
+                        <div class="setting-row">
+                            <label>Window Width</label>
+                            <input type="number" id="gameWidth" class="setting-num-input" value="854" min="400" max="7680" step="1">
+                        </div>
+                        <div class="setting-row" style="margin-top:0.5rem;">
+                            <label>Window Height</label>
+                            <input type="number" id="gameHeight" class="setting-num-input" value="480" min="300" max="4320" step="1">
+                        </div>
+                        <p class="setting-hint">Game window resolution (applies on next launch)</p>
+                    </div>
+                    <div class="setting-item">
+                        <div class="setting-row">
+                            <label>Custom Game Directory</label>
+                        </div>
+                        <div style="display:flex;gap:0.5rem;margin-top:0.3rem;">
+                            <input type="text" id="gameDir" class="setting-text-input" placeholder="Default .alrightlauncher" style="flex:1;">
+                            <button id="browseGameDir" class="settings-button" style="white-space:nowrap;padding:0.6rem 1rem;font-size:0.8rem;">Browse</button>
+                        </div>
+                        <p class="setting-hint">Override the Minecraft game directory path</p>
                     </div>
                 </div>
-                
-                <!-- Add new section for profile management -->
+
                 <div class="settings-section">
-                    <h3>Profile Management</h3>
+                    <h3>Launcher</h3>
                     <div class="setting-item">
-                        <button id="importMinecraftProfiles" class="settings-button">
-                            Import Minecraft Launcher Profiles
-                        </button>
-                        <p class="setting-description">
-                            Import profiles from the official Minecraft launcher
-                        </p>
+                        <div class="setting-row">
+                            <label>Close launcher after game starts</label>
+                            <label class="toggle">
+                                <input type="checkbox" id="closeAfterLaunch">
+                                <span class="toggle-track"></span>
+                            </label>
+                        </div>
+                    </div>
+                    <div class="setting-item">
+                        <div class="setting-row">
+                            <label>Minimize to tray instead of quit</label>
+                            <label class="toggle">
+                                <input type="checkbox" id="minimizeToTray">
+                                <span class="toggle-track"></span>
+                            </label>
+                        </div>
+                    </div>
+                    <div class="setting-item">
+                        <div class="setting-row">
+                            <label>Discord Rich Presence</label>
+                            <label class="toggle">
+                                <input type="checkbox" id="discordRpc">
+                                <span class="toggle-track"></span>
+                            </label>
+                        </div>
+                        <p class="setting-hint">Show what you're playing on your Discord profile</p>
+                    </div>
+                    <div class="setting-item">
+                        <div class="setting-row">
+                            <label>Check for updates on startup</label>
+                            <label class="toggle">
+                                <input type="checkbox" id="checkUpdates">
+                                <span class="toggle-track"></span>
+                            </label>
+                        </div>
                     </div>
                 </div>
+
+                <div class="settings-section">
+                    <h3>Network</h3>
+                    <div class="setting-item">
+                        <div class="setting-row">
+                            <label>Download Threads</label>
+                            <input type="number" id="downloadThreads" class="setting-num-input" value="4" min="1" max="32" step="1">
+                        </div>
+                        <p class="setting-hint">Number of parallel download streams (higher = faster, risk of rate limiting)</p>
+                    </div>
+                    <div class="setting-item">
+                        <div class="setting-row">
+                            <label>Connection Timeout (s)</label>
+                            <input type="number" id="connectionTimeout" class="setting-num-input" value="30" min="5" max="120" step="5">
+                        </div>
+                        <p class="setting-hint">Seconds before a download request times out</p>
+                    </div>
+                </div>
+
+                <div class="settings-section">
+                    <h3>Diagnostics</h3>
+                    <div class="setting-item">
+                        <div class="setting-row">
+                            <label>Developer Console</label>
+                            <label class="toggle">
+                                <input type="checkbox" id="devConsole">
+                                <span class="toggle-track"></span>
+                            </label>
+                        </div>
+                        <p class="setting-hint">Show internal logging console</p>
+                    </div>
+                    <div class="setting-item">
+                        <div class="setting-row">
+                            <label>Verbose Logging</label>
+                            <label class="toggle">
+                                <input type="checkbox" id="verboseLogging">
+                                <span class="toggle-track"></span>
+                            </label>
+                        </div>
+                        <p class="setting-hint">Detailed log output — useful for troubleshooting</p>
+                    </div>
+                    <div class="setting-item">
+                        <div class="setting-row">
+                            <label>Log Level</label>
+                            <select class="setting-select" id="logLevel">
+                                <option value="info">INFO</option>
+                                <option value="debug">DEBUG</option>
+                                <option value="warn">WARN</option>
+                                <option value="error">ERROR</option>
+                            </select>
+                        </div>
+                        <p class="setting-hint">Minimum log level to display in console</p>
+                    </div>
+                    <div class="setting-item">
+                        <div class="setting-row">
+                            <label>Game Profiler</label>
+                            <label class="toggle">
+                                <input type="checkbox" id="gameProfiler">
+                                <span class="toggle-track"></span>
+                            </label>
+                        </div>
+                        <p class="setting-hint">Enable Java Flight Recorder for performance profiling</p>
+                    </div>
+                    <div class="setting-item">
+                        <div class="setting-row">
+                            <label>Crash Reports</label>
+                            <select class="setting-select" id="crashReportBehavior">
+                                <option value="prompt">Prompt before sending</option>
+                                <option value="always">Always send</option>
+                                <option value="never">Never send</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="setting-item">
+                        <button id="openCrashReports" class="settings-button">View Crash Reports</button>
+                        <p class="setting-hint">Browse and manage crash reports</p>
+                    </div>
+                </div>
+
+                <div class="settings-section">
+                    <h3>Worlds</h3>
+                    <div class="setting-item">
+                        <button id="openWorldManager" class="settings-button">World Manager</button>
+                        <p class="setting-hint">Backup, restore, and manage your worlds</p>
+                    </div>
+                </div>
+
+                <div class="settings-section">
+                    <h3>Benchmark</h3>
+                    <div class="setting-item">
+                        <button id="runBenchmark" class="settings-button">Run Benchmark</button>
+                        <p class="setting-hint">Test performance with Java Flight Recorder profiling</p>
+                    </div>
+                    <div class="setting-item">
+                        <button id="viewBenchmarkHistory" class="settings-button">View History</button>
+                        <p class="setting-hint">Browse past benchmark results</p>
+                    </div>
+                </div>
+
+                <div class="settings-section">
+                    <h3>Storage</h3>
+                    <div class="setting-item">
+                        <button id="clearAssetCache" class="settings-button">Clear Assets</button>
+                        <p class="setting-hint">Sound & texture cache — re-downloads on next launch</p>
+                    </div>
+                    <div class="setting-item">
+                        <button id="clearLibraryCache" class="settings-button">Clear Libraries</button>
+                        <p class="setting-hint">Library cache — re-downloads on next launch</p>
+                    </div>
+                    <div class="setting-item">
+                        <button id="clearAllCache" class="settings-button btn-danger">Clear All Cache</button>
+                        <p class="setting-hint">Removes everything: assets, libraries, and versions</p>
+                    </div>
+                </div>
+
+                <div class="settings-section">
+                    <h3>Data</h3>
+                    <div class="setting-item">
+                        <button id="exportSettings" class="settings-button">Export Settings</button>
+                        <p class="setting-hint">Save all settings to a JSON file</p>
+                    </div>
+                    <div class="setting-item">
+                        <button id="importSettings" class="settings-button">Import Settings</button>
+                        <p class="setting-hint">Restore settings from a JSON file</p>
+                    </div>
+                </div>
+
+                <div class="settings-section">
+                    <h3>Danger Zone</h3>
+                    <p class="setting-hint" style="margin-bottom: 0.5rem;">These actions cannot be undone.</p>
+                    <div class="setting-item">
+                        <button id="resetSettings" class="settings-button btn-danger">Reset All Settings</button>
+                        <p class="setting-hint">Reset all preferences to default values</p>
+                    </div>
+                </div>
+
+                <div class="settings-section">
+                    <h3>About</h3>
+                    <div class="about-info">
+                        <div class="about-row"><span>Launcher</span><span>AlrightLauncher v3.1.2</span></div>
+                        <div class="about-row"><span>Minecraft Dir</span><span class="about-path" id="aboutMinecraftDir"></span></div>
+                        <div class="about-row"><span>Java Version</span><span class="about-path" id="aboutJavaVersion">Detecting...</span></div>
+                        <div class="about-row"><span>Available Memory</span><span id="aboutSystemMemory">...</span></div>
+                    </div>
+                </div>
+
             </div>
         </div>
     </div>
@@ -373,7 +752,7 @@
         <div class="modal-content">
             <div class="modal-header">
                 <h2>Select Minecraft Versions</h2>
-                <button class="modal-close">✕</button>
+                <button class="modal-close">&times;</button>
             </div>
             <div class="modal-body">
                 <div class="version-select-controls">
@@ -396,7 +775,7 @@
         <div class="modal-content">
             <div class="modal-header">
                 <h2>Minecraft Crashed</h2>
-                <button class="modal-close">✕</button>
+                <button class="modal-close">&times;</button>
             </div>
             <div class="modal-body">
                 <div class="crash-info">
@@ -411,14 +790,78 @@
         </div>
     </div>
 
+    <!-- World Manager Modal -->
+    <div class="modal" id="worldManagerModal">
+        <div class="modal-content" style="max-width: 700px;">
+            <div class="modal-header">
+                <h2>World Manager</h2>
+                <button class="modal-close" id="worldManagerClose">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="world-manager" id="worldList"></div>
+            </div>
+            <div class="modal-footer">
+                <button class="modal-button secondary modal-close">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Crash Reports Modal -->
+    <div class="modal" id="crashReportsModal">
+        <div class="modal-content" style="max-width: 750px;">
+            <div class="modal-header">
+                <h2>Crash Reports</h2>
+                <button class="modal-close" id="crashReportsClose">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="crash-viewer" id="crashReportsList"></div>
+            </div>
+            <div class="modal-footer">
+                <button class="modal-button secondary modal-close">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Benchmark Results Modal -->
+    <div class="modal" id="benchmarkModal">
+        <div class="modal-content" style="max-width: 650px;">
+            <div class="modal-header">
+                <h2>Benchmark Results</h2>
+                <button class="modal-close" id="benchmarkModalClose">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div id="benchmarkContent"></div>
+            </div>
+            <div class="modal-footer">
+                <button class="modal-button secondary modal-close">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Crash Toast Notification -->
+    <div class="crash-toast" id="crashToast" style="display:none;">
+        <div class="crash-toast-content">
+            <span class="crash-toast-icon">&#9888;</span>
+            <span class="crash-toast-text" id="crashToastText">Game crashed!</span>
+            <button class="crash-toast-btn" id="crashToastBtn">View Report</button>
+            <button class="crash-toast-close" id="crashToastClose">&times;</button>
+        </div>
+    </div>
+
+    <div class="progress-overlay-backdrop" id="progressBackdrop"></div>
     <div class="progress-overlay" id="progressOverlay">
-        <div class="progress-modal">
-            <h3 id="progressText">Working...</h3>
+        <div class="progress-card">
+            <div class="progress-header">
+                <h3 id="progressTitle">Working...</h3>
+                <span id="progressPercent">0%</span>
+            </div>
             <div class="progress-bar-container">
                 <div id="progressFill" class="progress-bar-fill"></div>
             </div>
-            <p id="progressDetail">Please wait</p>
-            <div id="progressLogs" class="progress-logs"></div>
+            <p id="progressStatus">Please wait</p>
+            <div class="progress-logs-container">
+                <div id="progressLogs" class="progress-logs"></div>
+            </div>
         </div>
     </div>
 

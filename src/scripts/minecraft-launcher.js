@@ -29,10 +29,12 @@ class MinecraftLauncher {
       },
       modern: {
         minVersion: 17,
-        maxVersion: 21,
+        maxVersion: 999,
         path: null,
       },
     };
+    // Track cached Java version for path reuse
+    this._cachedJavaVersion = 0;
 
     // Ensure all required directories exist
     fs.ensureDirSync(this.baseDir);
@@ -46,28 +48,60 @@ class MinecraftLauncher {
   }
 
   getRequiredJavaVersion(versionJson) {
-    // First check if version JSON specifies Java version
+    let majorVersion;
     if (versionJson.javaVersion) {
+      majorVersion = versionJson.javaVersion.majorVersion;
       if (
         versionJson.javaVersion.component === "jre-legacy" ||
-        versionJson.javaVersion.majorVersion === 8
+        majorVersion <= 8
       ) {
-        return "legacy";
+        return { type: "legacy", version: 8 };
       }
+      return { type: "modern", version: majorVersion || 17 };
     }
 
     // Fallback to version number check
     const versionNum = parseFloat(versionJson.id);
 
     if (versionNum <= 1.16) {
-      return "legacy"; // Java 8 required for versions 1.16 and older
+      return { type: "legacy", version: 8 };
     }
-    return "modern"; // Java 17+ for versions 1.17 and newer
+    return { type: "modern", version: 17 };
   }
 
-  findJavaPath(requiredVersion = "modern") {
-    if (this.javaVersions[requiredVersion].path) {
-      return this.javaVersions[requiredVersion].path;
+  readVersionJson(version) {
+    try {
+      const versionDir = path.join(this.baseDir, "versions", version);
+      const versionJsonPath = path.join(versionDir, `${version}.json`);
+      if (!fs.existsSync(versionJsonPath)) return null;
+      const versionData = fs.readFileSync(versionJsonPath, "utf8");
+      const versionInfo = JSON.parse(versionData);
+      if (versionInfo.inheritsFrom) {
+        const parentDir = path.join(this.baseDir, "versions", versionInfo.inheritsFrom);
+        const parentPath = path.join(parentDir, `${versionInfo.inheritsFrom}.json`);
+        if (fs.existsSync(parentPath)) {
+          const parentData = fs.readFileSync(parentPath, "utf8");
+          const parentInfo = JSON.parse(parentData);
+          return { ...parentInfo, ...versionInfo };
+        }
+      }
+      return versionInfo;
+    } catch (error) {
+      logger.error(`Error reading version JSON for ${version}: ${error.message}`);
+      return null;
+    }
+  }
+
+  findJavaPath(reqInfo = { type: "modern", version: 17 }) {
+    const type = reqInfo.type || "modern";
+    const requiredMajorVersion = reqInfo.version || 17;
+
+    // Check cache - use cached path only if it meets the version requirement
+    if (
+      this.javaVersions[type].path &&
+      this._cachedJavaVersion >= requiredMajorVersion
+    ) {
+      return this.javaVersions[type].path;
     }
 
     // First check Adoptium directory for numeric versioned paths
@@ -78,24 +112,25 @@ class MinecraftLauncher {
     if (fs.existsSync(adoptiumDir)) {
       try {
         const entries = fs.readdirSync(adoptiumDir);
-        const javaEntries = entries.filter((entry) => {
-          // Match patterns like jre-8.x.x, jdk-8.x.x
-          const match = entry.match(/^(jre|jdk)-(\d+)/);
-          if (!match) return false;
-
-          const majorVersion = parseInt(match[2]);
-          const config = this.javaVersions[requiredVersion];
-          return (
-            majorVersion >= config.minVersion &&
-            majorVersion <= config.maxVersion
-          );
-        });
+        // Sort by version descending to find the best match first
+        const javaEntries = entries
+          .filter((entry) => entry.match(/^(jre|jdk)-(\d+)/))
+          .sort((a, b) => {
+            const verA = parseInt(a.match(/^(jre|jdk)-(\d+)/)[2]);
+            const verB = parseInt(b.match(/^(jre|jdk)-(\d+)/)[2]);
+            return verB - verA;
+          });
 
         for (const entry of javaEntries) {
+          const majorVersion = parseInt(entry.match(/^(jre|jdk)-(\d+)/)[2]);
+          if (majorVersion < requiredMajorVersion) continue;
           const javaExe = path.join(adoptiumDir, entry, "bin", "java.exe");
           if (fs.existsSync(javaExe)) {
-            logger.info(`Found ${requiredVersion} Java at: ${javaExe}`);
-            this.javaVersions[requiredVersion].path = javaExe;
+            logger.info(
+              `Found Java ${majorVersion} at: ${javaExe}`
+            );
+            this.javaVersions[type].path = javaExe;
+            this._cachedJavaVersion = majorVersion;
             return javaExe;
           }
         }
@@ -104,37 +139,29 @@ class MinecraftLauncher {
       }
     }
 
-    // Define Java paths with explicit version checks
-    const adoptiumPaths = {
-      legacy: [
-        // Eclipse Adoptium paths
-        path.join(process.env["ProgramFiles"], "Eclipse Adoptium", "jre-8"),
-        path.join(process.env["ProgramFiles"], "Eclipse Adoptium", "jdk-8"),
-        path.join(
-          process.env["ProgramFiles(x86)"],
-          "Eclipse Adoptium",
-          "jre-8"
-        ),
-        // Oracle Java 8 paths
-        path.join(process.env["ProgramFiles"], "Java", "jre1.8.0_301"),
-        path.join(process.env["ProgramFiles"], "Java", "jdk1.8.0_301"),
-        path.join(process.env["ProgramFiles(x86)"], "Java", "jre1.8.0_301"),
-        // Zulu Java 8 paths
-        path.join(process.env["ProgramFiles"], "Zulu", "zulu-8"),
-        // AdoptOpenJDK paths
-        path.join(process.env["ProgramFiles"], "AdoptOpenJDK", "jre-8"),
-        path.join(process.env["ProgramFiles"], "AdoptOpenJDK", "jdk-8"),
-      ],
-      modern: [
-        path.join(process.env["ProgramFiles"], "Eclipse Adoptium", "jre-17"),
-        path.join(process.env["ProgramFiles"], "Eclipse Adoptium", "jre-21"),
-        path.join(process.env["ProgramFiles"], "Eclipse Adoptium", "jdk-17"),
-        path.join(process.env["ProgramFiles"], "Eclipse Adoptium", "jdk-21"),
-      ],
-    };
+    // Build dynamic path lists for known Java versions
+    const isLegacy = type === "legacy";
+    const knownVersions = isLegacy ? [8] : [17, 21, 25, 26];
+    const pathsToTry = isLegacy
+      ? knownVersions.flatMap((v) => [
+          path.join(process.env["ProgramFiles"], "Eclipse Adoptium", `jre-${v}`),
+          path.join(process.env["ProgramFiles"], "Eclipse Adoptium", `jdk-${v}`),
+          path.join(process.env["ProgramFiles(x86)"], "Eclipse Adoptium", `jre-${v}`),
+        ]).concat(
+          path.join(process.env["ProgramFiles"], "Java", "jre1.8.0_301"),
+          path.join(process.env["ProgramFiles"], "Java", "jdk1.8.0_301"),
+          path.join(process.env["ProgramFiles(x86)"], "Java", "jre1.8.0_301"),
+          path.join(process.env["ProgramFiles"], "Zulu", "zulu-8"),
+          path.join(process.env["ProgramFiles"], "AdoptOpenJDK", "jre-8"),
+          path.join(process.env["ProgramFiles"], "AdoptOpenJDK", "jdk-8")
+        )
+      : knownVersions.flatMap((v) => [
+          path.join(process.env["ProgramFiles"], "Eclipse Adoptium", `jre-${v}`),
+          path.join(process.env["ProgramFiles"], "Eclipse Adoptium", `jdk-${v}`),
+        ]);
 
     // Try specific paths first
-    for (const basePath of adoptiumPaths[requiredVersion]) {
+    for (const basePath of pathsToTry) {
       if (fs.existsSync(basePath)) {
         const javaExe = path.join(basePath, "bin", "java.exe");
         if (fs.existsSync(javaExe)) {
@@ -146,13 +173,12 @@ class MinecraftLauncher {
             const versionMatch = output.match(/version "([^"]+)"/);
             if (versionMatch) {
               const javaVersion = parseInt(versionMatch[1].split(".")[0]);
-              const config = this.javaVersions[requiredVersion];
-              if (
-                javaVersion >= config.minVersion &&
-                javaVersion <= config.maxVersion
-              ) {
-                this.javaVersions[requiredVersion].path = javaExe;
-                logger.info(`Found ${requiredVersion} Java at: ${javaExe}`);
+              if (javaVersion >= requiredMajorVersion) {
+                this.javaVersions[type].path = javaExe;
+                this._cachedJavaVersion = javaVersion;
+                logger.info(
+                  `Found Java ${javaVersion} at: ${javaExe}`
+                );
                 return javaExe;
               }
             }
@@ -172,7 +198,7 @@ class MinecraftLauncher {
     ].filter(Boolean);
     for (const searchDir of searchDirs) {
       try {
-        const foundJava = this.findJavaInDirectory(searchDir, requiredVersion);
+        const foundJava = this.findJavaInDirectory(searchDir, type, requiredMajorVersion);
         if (foundJava) return foundJava;
       } catch (error) {
         logger.error(`Error searching in ${searchDir}: ${error.message}`);
@@ -180,13 +206,11 @@ class MinecraftLauncher {
     }
 
     throw new Error(
-      `Could not find ${requiredVersion} Java installation. Please install Java ${
-        requiredVersion === "legacy" ? "8" : "17+"
-      }`
+      `Could not find Java ${requiredMajorVersion}+ installation. Please install Eclipse Temurin ${requiredMajorVersion} JRE.`
     );
   }
 
-  findJavaInDirectory(dir, requiredVersion) {
+  findJavaInDirectory(dir, type, requiredMajorVersion) {
     try {
       if (!fs.existsSync(dir)) return null;
 
@@ -222,13 +246,12 @@ class MinecraftLauncher {
                 const versionMatch = output.match(/version "([^"]+)"/);
                 if (versionMatch) {
                   const javaVersion = parseInt(versionMatch[1].split(".")[0]);
-                  const config = this.javaVersions[requiredVersion];
-                  if (
-                    javaVersion >= config.minVersion &&
-                    javaVersion <= config.maxVersion
-                  ) {
-                    this.javaVersions[requiredVersion].path = javaExe;
-                    logger.info(`Found ${requiredVersion} Java at: ${javaExe}`);
+                  if (javaVersion >= requiredMajorVersion) {
+                    this.javaVersions[type].path = javaExe;
+                    this._cachedJavaVersion = javaVersion;
+                    logger.info(
+                      `Found Java ${javaVersion} at: ${javaExe}`
+                    );
                     return javaExe;
                   }
                 }
@@ -238,7 +261,7 @@ class MinecraftLauncher {
             }
 
             // Recursively search subdirectories
-            const found = this.findJavaInDirectory(fullPath, requiredVersion);
+            const found = this.findJavaInDirectory(fullPath, type, requiredMajorVersion);
             if (found) return found;
           }
         } catch (error) {
@@ -534,11 +557,14 @@ class MinecraftLauncher {
 
   // Add methods to build JVM and game arguments
   buildJvmArgs(versionJson, options) {
-    const { classpath, nativesDir, gameDir, assetsDir, version } = options;
+    const { classpath, nativesDir, gameDir, assetsDir, version, maxRam, jvmArgs } = options;
     const args = [];
 
-    // Add memory settings
-    args.push("-Xmx2G"); // Default to 2GB max memory
+    // Add memory settings (values are in MB from the UI)
+    const maxMB = parseInt(maxRam) || 2048;
+    const minMB = parseInt(options.minRam) || maxMB;
+    args.push(`-Xmx${maxMB}M`);
+    args.push(`-Xms${minMB}M`);
     args.push("-XX:+UnlockExperimentalVMOptions");
     args.push("-XX:+UseG1GC");
     args.push("-XX:G1NewSizePercent=20");
@@ -551,6 +577,12 @@ class MinecraftLauncher {
     args.push(`-Dminecraft.launcher.brand=AlrightLauncher`);
     args.push(`-Dminecraft.launcher.version=3.0`);
     args.push("-Dlog4j2.formatMsgNoLookups=true"); // Log4j vulnerability mitigation
+
+    // Append custom JVM args from launcher settings
+    if (jvmArgs && typeof jvmArgs === 'string') {
+        const custom = jvmArgs.trim().split(/\s+/).filter(Boolean);
+        args.push(...custom);
+    }
 
     // Add classpath
     args.push("-cp");
@@ -596,6 +628,30 @@ class MinecraftLauncher {
     }
     
     args.push("--versionType", "release");
+
+    // Server auto-join
+    if (options.serverAddress) {
+      args.push("--server", options.serverAddress);
+      if (options.serverPort) {
+        args.push("--port", String(options.serverPort));
+      }
+    }
+
+    // Window size
+    if (options.gameWidth) args.push("--width", String(options.gameWidth));
+    if (options.gameHeight) args.push("--height", String(options.gameHeight));
+
+    // Skip title screen (1.20+)
+    if (options.skipTitleScreen) args.push("--quickPlayMultiplayer");
+
+    // Demo mode
+    if (options.demoMode) args.push("--demo");
+
+    // Custom game arguments (appended last so they override)
+    if (options.gameArgs && typeof options.gameArgs === 'string') {
+      const custom = options.gameArgs.trim().split(/\s+/).filter(Boolean);
+      args.push(...custom);
+    }
 
     return args;
   }
@@ -1576,6 +1632,9 @@ class MinecraftLauncher {
           gameDir,
           assetsDir,
           version,
+          maxRam: options.maxRam,
+          minRam: options.minRam,
+          jvmArgs: options.jvmArgs,
         });
 
         // Use the actual Microsoft profile name if authenticated
@@ -1586,7 +1645,14 @@ class MinecraftLauncher {
           version,
           gameDir,
           assetsDir,
-          authData
+          authData,
+          serverAddress: options.serverAddress,
+          serverPort: options.serverPort,
+          gameWidth: options.gameWidth,
+          gameHeight: options.gameHeight,
+          demoMode: options.demoMode,
+          skipTitleScreen: options.skipTitleScreen,
+          gameArgs: options.gameArgs,
         });
         
         // Add special JVM arguments for offline mode ONLY
@@ -1643,19 +1709,20 @@ class MinecraftLauncher {
 
       // Find Java path with error handling
       let javaPath;
+      let requiredJavaVersion;
       try {
-        const requiredJavaVersion = this.getRequiredJavaVersion(versionInfo);
+        requiredJavaVersion = this.getRequiredJavaVersion(versionInfo);
         javaPath = await this.findJavaPath(requiredJavaVersion);
         if (!javaPath) {
           throw new Error(
-            `Could not find Java for ${requiredJavaVersion} version`
+            `Could not find Java ${requiredJavaVersion.version}+ installation`
           );
         }
       } catch (error) {
         logger.error(`Error finding Java: ${error.message}`);
-        throw new Error(
-          `Failed to find suitable Java installation: ${error.message}`
-        );
+        // Attach required Java version info to the error for upstream handling
+        error.requiredJavaVersion = requiredJavaVersion?.version || 17;
+        throw error;
       }
 
       // Combine all arguments

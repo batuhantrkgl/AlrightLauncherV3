@@ -142,7 +142,7 @@ class ServerManager {
         };
     }
 
-    async startServer(name, memory = 2048) {
+    async startServer(name, memory = 2048, javaPath = 'java') {
         const serverPath = path.join(this.serverDir, name);
         if (!fs.existsSync(serverPath)) {
             throw new Error('Server does not exist');
@@ -167,7 +167,7 @@ class ServerManager {
             await fs.writeFile(path.join(serverPath, 'eula.txt'), 'eula=true');
         }
         
-        const server = spawn('java', [
+        const server = spawn(javaPath, [
             `-Xmx${memoryMB}M`,
             `-Xms${memoryMB}M`,
             '-jar',
@@ -282,6 +282,21 @@ class ServerManager {
         server.stdin.write('stop\n');
         this.servers.delete(name);
         return true;
+    }
+
+    async deleteServer(name) {
+        const serverPath = path.join(this.serverDir, name);
+        if (!fs.existsSync(serverPath)) throw new Error('Server does not exist');
+
+        // Kill if running
+        const proc = this.servers.get(name);
+        if (proc) {
+            proc.kill('SIGTERM');
+            this.servers.delete(name);
+        }
+
+        await fs.remove(serverPath);
+        return { success: true };
     }
 
     isServerRunning(name) {

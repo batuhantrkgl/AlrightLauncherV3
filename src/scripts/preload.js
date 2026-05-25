@@ -25,6 +25,40 @@ const safeUtils = {
 };
 
 // Expose safe APIs to renderer
+contextBridge.exposeInMainWorld('accounts', {
+    get: () => safeIpcInvoke('get-accounts'),
+    add: (data) => safeIpcInvoke('add-account', data),
+    remove: (id) => safeIpcInvoke('remove-account', id),
+    switch: (id) => safeIpcInvoke('switch-account', id)
+});
+
+contextBridge.exposeInMainWorld('worlds', {
+    get: () => safeIpcInvoke('get-worlds'),
+    backup: (worldName) => safeIpcInvoke('backup-world', worldName),
+    restore: (backupPath) => safeIpcInvoke('restore-world', backupPath),
+    delete: (worldName) => safeIpcInvoke('delete-world', worldName)
+});
+
+contextBridge.exposeInMainWorld('crashReports', {
+    get: () => safeIpcInvoke('get-crash-reports'),
+    delete: (filename) => safeIpcInvoke('delete-crash-report', filename),
+    onCrash: (callback) => {
+        if (typeof callback === 'function') {
+            ipcRenderer.on('game-crashed', (_, data) => callback(data));
+        }
+    }
+});
+
+contextBridge.exposeInMainWorld('benchmark', {
+    run: (options) => safeIpcInvoke('run-benchmark', options),
+    getHistory: () => safeIpcInvoke('get-benchmark-history'),
+    onComplete: (callback) => {
+        if (typeof callback === 'function') {
+            ipcRenderer.on('benchmark-complete', (_, data) => callback(data));
+        }
+    }
+});
+
 contextBridge.exposeInMainWorld('minecraft', {
     utils: safeUtils,
     logger: {
@@ -74,11 +108,19 @@ contextBridge.exposeInMainWorld('minecraft', {
                 return { success: false, error: error.message || 'Unknown launch error' };
             });
     },
-    checkJava: () => safeIpcInvoke('verify-java'),
-    isJavaInstalled: () => safeIpcInvoke('verify-java'),
+    checkJava: (options = {}) => safeIpcInvoke('verify-java', options),
+    isJavaInstalled: (options = {}) => safeIpcInvoke('verify-java', options),
+    installJava: (options = {}) => safeIpcInvoke('install-java', options),
+    getRequiredJavaVersion: (version) => safeIpcInvoke('get-required-java-version', version),
+    onJavaInstallProgress: (callback) => {
+        if (typeof callback === 'function') {
+            ipcRenderer.on('java-install-progress', (_, data) => callback(data));
+        }
+    },
     getVersions: () => safeIpcInvoke('get-versions'),
     isGameRunning: (version) => safeIpcInvoke('is-game-running', version),
     verifyGameFiles: (version) => safeIpcInvoke('verify-game-files', version),
+    clearCache: (target) => safeIpcInvoke('clear-cache', target),
     auth: {
         login: () => safeIpcInvoke('authenticate'),
         logout: () => safeIpcInvoke('logout'),
@@ -94,11 +136,12 @@ contextBridge.exposeInMainWorld('minecraft', {
             const validChannels = [
                 'create-standalone',
                 'download-java',
+                'install-java',
                 'verify-game-files',
                 'get-installed-versions',
-                'hide-window',      // Add this channel
-                'show-window',      // Add this channel
-                'get-system-info'   // Add this channel to the list
+                'hide-window',
+                'show-window',
+                'get-system-info'
             ];
             if (validChannels.includes(channel)) {
                 return safeIpcInvoke(channel, ...args);
@@ -121,6 +164,7 @@ contextBridge.exposeInMainWorld('minecraft', {
         start: (name, memory) => safeIpcInvoke('start-server', { name, memory }),
         stop: (name) => safeIpcInvoke('stop-server', name),
         list: () => safeIpcInvoke('get-servers'),
+        delete: (name) => safeIpcInvoke('delete-server', name),
         onLog: (callback) => {
             if (typeof callback === 'function') {
                 ipcRenderer.on('server-log', (_, data) => callback(data));
@@ -208,6 +252,8 @@ contextBridge.exposeInMainWorld('minecraft', {
     // Add system utilities
     system: {
         openExternal: (url) => ipcRenderer.invoke('open-external', url),
+        getMinecraftDir: () => ipcRenderer.invoke('get-minecraft-dir'),
+        selectDirectory: () => ipcRenderer.invoke('select-directory'),
     }
 });
 

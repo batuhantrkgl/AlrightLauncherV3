@@ -215,22 +215,37 @@ class AuthService {
                 throw new Error('Invalid token response: missing access_token');
             }
             
+            const msAccessToken = tokenData.access_token;
+            const newRefreshToken = tokenData.refresh_token || this.authData.refreshToken;
+            
+            // Re-run Xbox → XSTS → Minecraft auth chain to get a new Minecraft token
+            let mcAccessToken = this.authData.accessToken;
+            let profile = this.authData.profile;
+            try {
+                const xboxLiveResponse = await this.authenticateWithXboxLive(msAccessToken);
+                if (xboxLiveResponse && xboxLiveResponse.Token) {
+                    const xstsResponse = await this.getXstsToken(xboxLiveResponse.Token);
+                    if (xstsResponse && xstsResponse.token) {
+                        const mcResponse = await this.authenticateWithMinecraft(xstsResponse);
+                        if (mcResponse && mcResponse.access_token) {
+                            mcAccessToken = mcResponse.access_token;
+                            profile = await this.getMinecraftProfile(mcAccessToken);
+                        }
+                    }
+                }
+            } catch (chainError) {
+                logger.error(`Failed to re-authenticate Minecraft chain: ${chainError.message}`);
+                // Keep old Minecraft token as fallback
+            }
+            
             // Update the authentication data
             this.authData = {
                 ...this.authData,
-                accessToken: tokenData.access_token,
-                refreshToken: tokenData.refresh_token || this.authData.refreshToken, // Keep old refresh token if not provided
+                accessToken: mcAccessToken,
+                refreshToken: newRefreshToken,
+                profile,
                 expiresAt: Date.now() + (tokenData.expires_in * 1000)
             };
-            
-            // Re-validate Minecraft profile with new token
-            try {
-                const profile = await this.getMinecraftProfile(this.authData.accessToken);
-                this.authData.profile = profile;
-            } catch (profileError) {
-                logger.error(`Failed to refresh Minecraft profile: ${profileError.message}`);
-                // Continue anyway, at least we have a valid token
-            }
             
             // Save updated auth data
             await this.saveAuthData();

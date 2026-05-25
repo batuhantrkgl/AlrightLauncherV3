@@ -12,6 +12,7 @@ const UpdateService = require('./update-service');
 const logger = require('./logger');
 const discordRPC = require('./discord-rpc');
 const AuthService = require('./auth-service');
+const AdmZip = require('adm-zip');
 // Import the auth integration module
 const { initAuthIntegration } = require('./auth-integration');
 
@@ -98,40 +99,97 @@ async function registerIpcHandlers() {
     });
 
     // Register other handlers
-    ipcMain.handle('verify-java', async () => {
-        console.log('Verify Java handler called');
+    async function checkAdoptiumJava() {
+        try {
+            const programFiles = process.env.ProgramFiles || 'C:\\Program Files';
+            const adoptiumDir = path.join(programFiles, 'Eclipse Adoptium');
+            if (!await fs.pathExists(adoptiumDir)) return null;
+            const entries = await fs.readdir(adoptiumDir);
+            // Sort by version descending to find newest first
+            const javaEntries = entries
+                .filter(e => /^(jre|jdk)-(\d+)/.test(e))
+                .sort((a, b) => {
+                    const vA = parseInt(a.match(/^(?:jre|jdk)-(\d+)/)[1]);
+                    const vB = parseInt(b.match(/^(?:jre|jdk)-(\d+)/)[1]);
+                    return vB - vA;
+                });
+            for (const entry of javaEntries) {
+                const majorVersion = parseInt(entry.match(/^(?:jre|jdk)-(\d+)/)[1]);
+                const javaExe = path.join(adoptiumDir, entry, 'bin', 'java.exe');
+                if (await fs.pathExists(javaExe)) {
+                    const version = await new Promise((resolve) => {
+                        const proc = spawn(javaExe, ['-version']);
+                        let timer = setTimeout(() => { proc.kill(); resolve(null); }, 5000);
+                        proc.stderr.on('data', (d) => { clearTimeout(timer); resolve(d.toString().trim()); });
+                        proc.on('error', () => { clearTimeout(timer); resolve(null); });
+                        proc.on('close', () => { clearTimeout(timer); resolve(null); });
+                    });
+                    if (version) return { path: javaExe, version, majorVersion };
+                }
+            }
+            return null;
+        } catch { return null; }
+    }
+
+    ipcMain.handle('verify-java', async (event, options = {}) => {
+        const minVersion = options.minVersion || 0;
+        console.log(`Verify Java handler called (minVersion: ${minVersion})`);
         return new Promise((resolve) => {
             try {
                 const javaProcess = spawn('java', ['-version']);
+                let resolved = false;
 
-                javaProcess.on('error', (error) => {
-                    console.log('Java not found:', error);
-                    resolve({
-                        installed: false,
-                        message: 'No Java installed, please install "Temurin 21 JRE" and relaunch.'
-                    });
+                const resolveResult = async (path, versionStr) => {
+                    if (resolved) return;
+                    resolved = true;
+                    const versionMatch = versionStr ? versionStr.match(/version "([^"]+)"/) : null;
+                    const majorVersion = versionMatch ? parseInt(versionMatch[1].split(".")[0]) : 0;
+                    if (majorVersion >= minVersion) {
+                        resolve({ installed: true, version: versionStr, path, majorVersion });
+                    } else {
+                        const found = await checkAdoptiumJava();
+                        if (found && found.majorVersion >= minVersion) {
+                            resolve({ installed: true, version: found.version, path: found.path, majorVersion: found.majorVersion });
+                        } else {
+                            resolve({ installed: false, message: `Java ${minVersion}+ required. Found Java ${majorVersion || 'none'}.` });
+                        }
+                    }
+                };
+
+                javaProcess.on('error', async () => {
+                    const found = await checkAdoptiumJava();
+                    if (found) {
+                        await resolveResult(found.path, found.version);
+                    } else {
+                        if (!resolved) {
+                            resolved = true;
+                            resolve({ installed: false, message: minVersion > 0 ? `Java ${minVersion}+ not found.` : 'Java not found.' });
+                        }
+                    }
                 });
 
                 javaProcess.stderr.on('data', (data) => {
-                    console.log('Java version output:', data.toString());
-                    resolve({installed: true, version: data.toString()});
+                    const versionStr = data.toString();
+                    console.log('Java version output:', versionStr);
+                    resolveResult(null, versionStr);
                 });
 
-                javaProcess.on('close', (code) => {
-                    console.log('Java verification process closed with code:', code);
-                    if (code !== 0) {
-                        resolve({
-                            installed: false,
-                            message: 'No Java installed, please install "Temurin 21 JRE" and relaunch.'
-                        });
+                javaProcess.on('close', async (code) => {
+                    if (code !== 0 && !resolved) {
+                        const found = await checkAdoptiumJava();
+                        if (found) {
+                            await resolveResult(found.path, found.version);
+                        } else {
+                            if (!resolved) {
+                                resolved = true;
+                                resolve({ installed: false, message: minVersion > 0 ? `Java ${minVersion}+ not found.` : 'Java not found.' });
+                            }
+                        }
                     }
                 });
             } catch (error) {
                 console.error('Java verification exception:', error);
-                resolve({
-                    installed: false,
-                    message: 'No Java installed, please install "Temurin 21 JRE" and relaunch.'
-                });
+                resolve({ installed: false, message: minVersion > 0 ? `Java ${minVersion}+ not found.` : 'Java not found.' });
             }
         });
     });
@@ -503,7 +561,30 @@ async function registerIpcHandlers() {
     ipcMain.handle('start-server', async (event, {name, memory}) => {
         try {
             if (!serverManager) return {error: 'Server manager not initialized'};
-            return await serverManager.startServer(name, memory);
+            // Find the right Java for the server version
+            let javaPath = 'java';
+            try {
+                const launcher = new MinecraftLauncher(global.minecraftPath);
+                const serverConfigPath = path.join(global.minecraftPath, 'servers', name, 'server-config.json');
+                if (fs.existsSync(serverConfigPath)) {
+                    const config = JSON.parse(await fs.readFile(serverConfigPath, 'utf8'));
+                    const serverVersion = config.version || '';
+                    const verNum = parseFloat(serverVersion);
+                    // Try newer Java first (25 → 21 → 17 → 8), fall back to system java
+                    const candidates = (verNum <= 1.16 || serverVersion.startsWith('1.'))
+                        ? [{ type: 'legacy', version: 8 }]
+                        : [{ type: 'modern', version: 25 }, { type: 'modern', version: 21 }, { type: 'modern', version: 17 }];
+                    for (const req of candidates) {
+                        try {
+                            javaPath = launcher.findJavaPath(req);
+                            if (javaPath) break;
+                        } catch { }
+                    }
+                }
+            } catch (javaError) {
+                logger.warn(`Could not resolve Java path for server, using default: ${javaError.message}`);
+            }
+            return await serverManager.startServer(name, memory, javaPath);
         } catch (error) {
             console.error('Server start error:', error);
             return {error: error.message};
@@ -530,6 +611,37 @@ async function registerIpcHandlers() {
         } catch (error) {
             console.error('Get servers error:', error);
             return [];
+        }
+    });
+
+    ipcMain.handle('delete-server', async (event, name) => {
+        try {
+            if (!serverManager) return {error: 'Server manager not initialized'};
+            return await serverManager.deleteServer(name);
+        } catch (error) {
+            console.error('Server delete error:', error);
+            return {error: error.message};
+        }
+    });
+
+    ipcMain.handle('clear-cache', async (event, target) => {
+        try {
+            const dirs = {
+                assets: path.join(global.minecraftPath, 'assets'),
+                libraries: path.join(global.minecraftPath, 'libraries'),
+                versions: path.join(global.minecraftPath, 'versions'),
+            };
+            if (target === 'all') {
+                for (const d of Object.values(dirs)) {
+                    if (fs.existsSync(d)) await fs.remove(d);
+                }
+            } else if (dirs[target]) {
+                if (fs.existsSync(dirs[target])) await fs.remove(dirs[target]);
+            }
+            return {success: true};
+        } catch (error) {
+            console.error('Clear cache error:', error);
+            return {error: error.message};
         }
     });
 
@@ -579,6 +691,44 @@ async function registerIpcHandlers() {
         } catch (error) {
             console.error('Error downloading Java:', error);
             return false;
+        }
+    });
+
+    ipcMain.handle('get-required-java-version', async (event, version) => {
+        try {
+            const launcher = new MinecraftLauncher(global.minecraftPath);
+            const versionInfo = launcher.readVersionJson(version);
+            if (!versionInfo) {
+                return { version: 21 };
+            }
+            const req = launcher.getRequiredJavaVersion(versionInfo);
+            return { version: req.version || 21 };
+        } catch (error) {
+            logger.error(`Error detecting required Java version: ${error.message}`);
+            return { version: 21 };
+        }
+    });
+
+    ipcMain.handle('install-java', async (event, options = {}) => {
+        const javaVersion = options.javaVersion || 21;
+        try {
+            const JavaInstaller = require('./java-installer');
+            const installer = new JavaInstaller({ javaVersion });
+
+            if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.webContents.send('java-install-progress', { type: 'status', message: `Starting Eclipse Temurin ${javaVersion} JRE installation...` });
+            }
+
+            await installer.install((progress) => {
+                if (mainWindow && !mainWindow.isDestroyed()) {
+                    mainWindow.webContents.send('java-install-progress', progress);
+                }
+            });
+
+            return { success: true, javaVersion };
+        } catch (error) {
+            logger.error(`Java ${javaVersion} installation failed: ${error.message}`);
+            return { success: false, error: error.message, javaVersion };
         }
     });
 
@@ -1039,10 +1189,9 @@ async function registerIpcHandlers() {
     // Add handler for opening external links
     ipcMain.handle('open-external', async (event, url) => {
         try {
-            // Validate URL to prevent security issues
             const validUrl = new URL(url);
             const allowedProtocols = ['https:', 'http:'];
-
+            
             if (allowedProtocols.includes(validUrl.protocol)) {
                 await shell.openExternal(url);
                 return true;
@@ -1054,6 +1203,267 @@ async function registerIpcHandlers() {
             logger.error(`Error opening external URL: ${error.message}`);
             return false;
         }
+    });
+    
+    ipcMain.handle('get-minecraft-dir', () => {
+        return global.minecraftPath || '';
+    });
+    
+    ipcMain.handle('select-directory', async () => {
+        const { canceled, filePaths } = await dialog.showOpenDialog({
+            properties: ['openDirectory']
+        });
+        return canceled ? null : filePaths[0];
+    });
+
+    // ==================== Account Switcher Handlers ====================
+    async function readAccountsFile() {
+        const filePath = path.join(global.minecraftPath, 'accounts.json');
+        try {
+            if (await fs.pathExists(filePath)) {
+                return JSON.parse(await fs.readFile(filePath, 'utf8'));
+            }
+        } catch (e) {
+            logger.error(`Failed to read accounts file: ${e.message}`);
+        }
+        return { accounts: [], activeId: null };
+    }
+
+    async function writeAccountsFile(data) {
+        const filePath = path.join(global.minecraftPath, 'accounts.json');
+        await fs.writeFile(filePath, JSON.stringify(data, null, 2), 'utf8');
+    }
+
+    ipcMain.handle('get-accounts', async () => {
+        const data = await readAccountsFile();
+        return data.accounts.map(a => ({ id: a.id, username: a.profile?.name || a.username, isActive: a.id === data.activeId }));
+    });
+
+    ipcMain.handle('add-account', async (event, accountData) => {
+        const data = await readAccountsFile();
+        const existing = data.accounts.findIndex(a => a.id === accountData.id);
+        if (existing >= 0) {
+            data.accounts[existing] = accountData;
+        } else {
+            data.accounts.push(accountData);
+        }
+        await writeAccountsFile(data);
+        return { success: true };
+    });
+
+    ipcMain.handle('remove-account', async (event, id) => {
+        const data = await readAccountsFile();
+        data.accounts = data.accounts.filter(a => a.id !== id);
+        if (data.activeId === id) data.activeId = null;
+        await writeAccountsFile(data);
+        return { success: true };
+    });
+
+    ipcMain.handle('switch-account', async (event, id) => {
+        const data = await readAccountsFile();
+        const account = data.accounts.find(a => a.id === id);
+        if (!account) return { error: 'Account not found' };
+        data.activeId = id;
+        await writeAccountsFile(data);
+        if (authService && account.refreshToken) {
+            try {
+                const profile = await authService.loginWithRefreshToken(account.refreshToken);
+                BrowserWindow.getAllWindows().forEach(win => {
+                    if (!win.isDestroyed()) win.webContents.send('profile-updated', profile);
+                });
+                return { success: true, profile };
+            } catch (e) {
+                logger.error(`Re-auth failed for account ${id}: ${e.message}`);
+                return { success: true, warning: 'Account switched but re-authentication failed' };
+            }
+        }
+        return { success: true };
+    });
+
+    // ==================== World Manager Handlers ====================
+    async function getDirSize(dirPath) {
+        let total = 0;
+        try {
+            const entries = await fs.readdir(dirPath, { withFileTypes: true });
+            for (const entry of entries) {
+                const fullPath = path.join(dirPath, entry.name);
+                if (entry.isDirectory()) {
+                    total += await getDirSize(fullPath);
+                } else if (entry.isFile()) {
+                    total += (await fs.stat(fullPath)).size;
+                }
+            }
+        } catch (e) { /* skip */ }
+        return total;
+    }
+
+    ipcMain.handle('get-worlds', async () => {
+        const savesDir = path.join(global.minecraftPath, 'saves');
+        try {
+            await fs.ensureDir(savesDir);
+            const entries = await fs.readdir(savesDir, { withFileTypes: true });
+            const worlds = [];
+            for (const entry of entries) {
+                if (entry.isDirectory()) {
+                    const worldPath = path.join(savesDir, entry.name);
+                    try {
+                        const stat = await fs.stat(worldPath);
+                        const size = await getDirSize(worldPath);
+                        worlds.push({ name: entry.name, path: worldPath, lastModified: stat.mtime.toISOString(), size });
+                    } catch (e) { /* skip problematic dirs */ }
+                }
+            }
+            return worlds;
+        } catch (e) {
+            logger.error(`Error listing worlds: ${e.message}`);
+            return [];
+        }
+    });
+
+    ipcMain.handle('backup-world', async (event, worldName) => {
+        const savesDir = path.join(global.minecraftPath, 'saves');
+        const backupsDir = path.join(global.minecraftPath, 'backups', 'worlds');
+        await fs.ensureDir(backupsDir);
+        const worldPath = path.join(savesDir, worldName);
+        if (!await fs.pathExists(worldPath)) return { error: 'World not found' };
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const zipPath = path.join(backupsDir, `${worldName}-${timestamp}.zip`);
+        try {
+            const zip = new AdmZip();
+            zip.addLocalFolder(worldPath);
+            zip.writeZip(zipPath);
+            logger.info(`World ${worldName} backed up to ${zipPath}`);
+            return { success: true, path: zipPath };
+        } catch (e) {
+            logger.error(`Backup failed: ${e.message}`);
+            return { error: e.message };
+        }
+    });
+
+    ipcMain.handle('restore-world', async (event, backupPath) => {
+        const savesDir = path.join(global.minecraftPath, 'saves');
+        try {
+            const zip = new AdmZip(backupPath);
+            const entries = zip.getEntries();
+            const topDir = entries[0]?.entryName.split('/')[0];
+            const extractPath = path.join(savesDir, topDir || 'restored-world');
+            await fs.ensureDir(extractPath);
+            zip.extractAllTo(savesDir, true);
+            logger.info(`World restored from ${backupPath}`);
+            return { success: true };
+        } catch (e) {
+            logger.error(`Restore failed: ${e.message}`);
+            return { error: e.message };
+        }
+    });
+
+    ipcMain.handle('delete-world', async (event, worldName) => {
+        const worldPath = path.join(global.minecraftPath, 'saves', worldName);
+        try {
+            await fs.remove(worldPath);
+            logger.info(`World ${worldName} deleted`);
+            return { success: true };
+        } catch (e) {
+            logger.error(`Delete failed: ${e.message}`);
+            return { error: e.message };
+        }
+    });
+
+    // ==================== Crash Report Handlers ====================
+    ipcMain.handle('get-crash-reports', async () => {
+        const crashDir = path.join(global.minecraftPath, 'crash-reports');
+        try {
+            await fs.ensureDir(crashDir);
+            const files = await fs.readdir(crashDir);
+            const reports = [];
+            for (const file of files) {
+                const filePath = path.join(crashDir, file);
+                try {
+                    const content = await fs.readFile(filePath, 'utf8');
+                    const stat = await fs.stat(filePath);
+                    const descMatch = content.match(/Description:\s*(.+)/);
+                    const description = descMatch ? descMatch[1].trim() : 'No description';
+                    const stackMatch = content.match(/Stacktrace:[\s\S]*?(?=\n\n|\n[A-Z]|$)/);
+                    const stacktrace = stackMatch ? stackMatch[0].trim() : '';
+                    reports.push({ filename: file, time: stat.mtime.toISOString(), description, stacktrace, content });
+                } catch (e) { /* skip unreadable */ }
+            }
+            return reports.sort((a, b) => new Date(b.time) - new Date(a.time));
+        } catch (e) {
+            logger.error(`Error reading crash reports: ${e.message}`);
+            return [];
+        }
+    });
+
+    ipcMain.handle('delete-crash-report', async (event, filename) => {
+        const filePath = path.join(global.minecraftPath, 'crash-reports', filename);
+        try {
+            await fs.remove(filePath);
+            return { success: true };
+        } catch (e) {
+            return { error: e.message };
+        }
+    });
+
+    // ==================== Benchmark Mode Handlers ====================
+    ipcMain.handle('run-benchmark', async (event, options = {}) => {
+        try {
+            const version = options.version || 'latest';
+            const duration = options.duration || 60;
+            const username = options.username || 'Benchmarker';
+            const launcher = new MinecraftLauncher(global.minecraftPath);
+            const result = await launcher.launch(version, username, {
+                ...options,
+                jvmArgs: `${options.jvmArgs || ''} -XX:StartFlightRecording=duration=${duration}s,filename=benchmark.jfr`,
+                offline: true,
+                maxRam: options.maxRam || 4096
+            });
+            if (!result || !result.process) return { error: 'Failed to launch benchmark' };
+            let fpsSamples = [];
+            const logPath = path.join(global.minecraftPath, 'logs', 'latest.log');
+            const onLog = (data) => {
+                const str = data.toString();
+                const fpsMatch = str.match(/\[FPS:\s*(\d+)\]/i) || str.match(/(\d+)\s*fps/i);
+                if (fpsMatch) fpsSamples.push(parseInt(fpsMatch[1]));
+            };
+            if (result.process.stdout) result.process.stdout.on('data', onLog);
+            if (result.process.stderr) result.process.stderr.on('data', onLog);
+            await new Promise((resolve) => {
+                result.process.on('exit', () => {
+                    if (mainWindow && !mainWindow.isDestroyed()) {
+                        mainWindow.webContents.send('benchmark-complete', { version });
+                    }
+                    resolve();
+                });
+            });
+            const avgFps = fpsSamples.length > 0 ? Math.round(fpsSamples.reduce((a, b) => a + b, 0) / fpsSamples.length) : 0;
+            const minFps = fpsSamples.length > 0 ? Math.min(...fpsSamples) : 0;
+            const maxFps = fpsSamples.length > 0 ? Math.max(...fpsSamples) : 0;
+            const benchmarkResult = { version, timestamp: new Date().toISOString(), avgFps, minFps, maxFps, samples: fpsSamples.length, duration };
+            const benchmarksDir = path.join(global.minecraftPath, 'benchmarks');
+            await fs.ensureDir(benchmarksDir);
+            const histPath = path.join(benchmarksDir, 'benchmark-history.json');
+            let history = [];
+            if (await fs.pathExists(histPath)) {
+                try { history = JSON.parse(await fs.readFile(histPath, 'utf8')); } catch (e) { /* ignore */ }
+            }
+            history.push(benchmarkResult);
+            await fs.writeFile(histPath, JSON.stringify(history, null, 2), 'utf8');
+            return { success: true, result: benchmarkResult };
+        } catch (e) {
+            logger.error(`Benchmark failed: ${e.message}`);
+            return { error: e.message };
+        }
+    });
+
+    ipcMain.handle('get-benchmark-history', async () => {
+        const histPath = path.join(global.minecraftPath, 'benchmarks', 'benchmark-history.json');
+        try {
+            if (await fs.pathExists(histPath)) {
+                return JSON.parse(await fs.readFile(histPath, 'utf8'));
+            }
+        } catch (e) { /* ignore */ }
+        return [];
     });
 }
 
@@ -1133,7 +1543,7 @@ async function createWindow() {
     authService = new AuthService();
     
     // Initialize auth integration
-    authCleanup = initAuthIntegration(authService, minecraftLauncher);
+    authCleanup = initAuthIntegration({ authService, minecraftLauncher });
 
     // Register IPC handlers before loading the file
     registerIpcHandlers();
@@ -1159,7 +1569,6 @@ async function createWindow() {
 
     mainWindow.webContents.on('did-finish-load', () => {
         console.log('[Main] Window content loaded');
-        console.log('[Main] Available IPC handlers:', ipcMain.eventNames());
     });
 
     mainWindow.on('closed', () => {
@@ -1190,7 +1599,7 @@ async function createWindow() {
         console.log('[Main] Window unmaximized');
     });
 
-    console.log('Window created, available IPC handlers:', ipcMain.eventNames());
+    console.log('[Main] Window content loaded');
 }
 
 // Initialize app

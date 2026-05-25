@@ -30,8 +30,8 @@ class MinecraftInstaller extends EventEmitter { // Extend EventEmitter
         
         this.downloadQueue = [];
         this.isDownloading = false;
-        this.downloadDelay = 100; // 100ms delay between downloads
-        this.downloadChunkSize = 64 * 1024; // 64KB chunks
+        this.maxConcurrent = 16;
+        this.downloadChunkSize = 1024 * 1024;
     }
 
     createDirectories() {
@@ -85,68 +85,52 @@ class MinecraftInstaller extends EventEmitter { // Extend EventEmitter
 
     async processDownloadQueue() {
         if (this.isDownloading || this.downloadQueue.length === 0) return;
-        
         this.isDownloading = true;
-        const download = this.downloadQueue.shift();
 
+        const concurrency = this.maxConcurrent;
+
+        while (this.downloadQueue.length > 0) {
+            const batch = this.downloadQueue.splice(0, concurrency);
+            await Promise.all(batch.map(dl => this.executeDownload(dl)));
+        }
+
+        this.isDownloading = false;
+    }
+
+    async executeDownload(download) {
         for (let attempt = 1; attempt <= download.maxRetries; attempt++) {
             try {
                 const response = await fetch(download.url);
                 if (!response.ok) throw new Error(`Failed to download: ${response.statusText}`);
-                
-                const totalSize = parseInt(response.headers.get('content-length'), 10);
-                let downloadedSize = 0;
 
-                // Ensure the directory exists and is writable
-                await fs.ensureDir(path.dirname(download.destination), { mode: 0o755 });
-                
-                // Create write stream with explicit permissions
+                const totalSize = parseInt(response.headers.get('content-length'), 10);
+
+                await fs.ensureDir(path.dirname(download.destination));
+
                 const fileStream = fs.createWriteStream(download.destination, {
                     flags: 'w',
                     mode: 0o644
                 });
 
                 await new Promise((resolve, reject) => {
-                    response.body.on('data', chunk => {
-                        downloadedSize += chunk.length;
-                        const percent = (downloadedSize / totalSize) * 100;
-                        
-                        this.sendProgress(
-                            percent,
-                            'Downloading',
-                            `${download.description} (${(downloadedSize / 1024 / 1024).toFixed(2)}/${(totalSize / 1024 / 1024).toFixed(2)} MB)`
-                        );
-
-                        fileStream.write(chunk);
-                    });
-
-                    response.body.on('end', () => {
-                        fileStream.end();
-                    });
-
+                    response.body.pipe(fileStream);
                     response.body.on('error', reject);
                     fileStream.on('finish', resolve);
                     fileStream.on('error', reject);
                 });
 
-                // Verify the downloaded file
                 const stats = await fs.stat(download.destination);
-                if (stats.size === 0 || stats.size !== totalSize) {
-                    throw new Error(`File verification failed - expected ${totalSize} bytes but got ${stats.size}`);
+                if (stats.size === 0) {
+                    throw new Error(`Downloaded file is empty`);
                 }
 
-                // Set file permissions
                 await fs.chmod(download.destination, 0o644);
-
-                // Add delay between files
-                await new Promise(r => setTimeout(r, this.downloadDelay));
                 download.resolve(true);
-                break;
+                return;
 
             } catch (error) {
                 logger.error(`Download attempt ${attempt} failed for ${download.description}: ${error.message}`);
-                
-                // Clean up failed download
+
                 try {
                     if (await fs.pathExists(download.destination)) {
                         await fs.remove(download.destination);
@@ -157,16 +141,12 @@ class MinecraftInstaller extends EventEmitter { // Extend EventEmitter
 
                 if (attempt === download.maxRetries) {
                     download.reject(new Error(`Failed to download ${download.description} after ${download.maxRetries} attempts: ${error.message}`));
-                    break;
+                    return;
                 }
-                
-                // Exponential backoff between retries
+
                 await new Promise(r => setTimeout(r, attempt * 2000));
             }
         }
-
-        this.isDownloading = false;
-        this.processDownloadQueue();
     }
 
     async getVersionManifest() {
@@ -977,43 +957,46 @@ class MinecraftInstaller extends EventEmitter { // Extend EventEmitter
             await fs.ensureDir(path.join(this.assetsDir, 'indexes'));
             await fs.ensureDir(path.join(this.assetsDir, 'objects'));
 
-            // Download libraries
+            // Download libraries in concurrent batches
             const totalLibraries = versionData.libraries.length;
-            for (let i = 0; i < totalLibraries; i++) {
-                const lib = versionData.libraries[i];
-                
-                // Skip undefined or incomplete library entries
-                if (!lib || !lib.downloads) {
-                    logger.warn(`Skipping invalid library entry at index ${i}`);
-                    continue;
-                }
-                
-                // Skip libraries without artifact information
-                if (!lib.downloads.artifact) {
-                    logger.info(`Library entry ${i} (${lib.name || 'unnamed'}) has no artifact, skipping`);
-                    continue;
+            const BATCH_SIZE = 16;
+
+            for (let batchStart = 0; batchStart < totalLibraries; batchStart += BATCH_SIZE) {
+                const batchEnd = Math.min(batchStart + BATCH_SIZE, totalLibraries);
+                const batchPromises = [];
+
+                for (let i = batchStart; i < batchEnd; i++) {
+                    const lib = versionData.libraries[i];
+
+                    if (!lib || !lib.downloads) {
+                        logger.warn(`Skipping invalid library entry at index ${i}`);
+                        continue;
+                    }
+
+                    if (!lib.downloads.artifact || !lib.downloads.artifact.path) {
+                        continue;
+                    }
+
+                    const libPath = path.join(this.librariesDir, lib.downloads.artifact.path);
+                    await fs.ensureDir(path.dirname(libPath));
+
+                    if (!fs.existsSync(libPath)) {
+                        batchPromises.push(
+                            this.downloadFile(
+                                lib.downloads.artifact.url,
+                                libPath,
+                                `Library: ${lib.name || `#${i}`}`
+                            )
+                        );
+                    }
                 }
 
-                const progress = 10 + (40 * (i / totalLibraries));
-                
-                // Add safeguard for path
-                if (!lib.downloads.artifact.path) {
-                    logger.warn(`Library ${lib.name || `entry #${i}`} has no path defined, skipping`);
-                    continue;
+                if (batchPromises.length > 0) {
+                    await Promise.all(batchPromises);
                 }
-                
-                const libPath = path.join(this.librariesDir, lib.downloads.artifact.path);
-                await fs.ensureDir(path.dirname(libPath));
 
-                if (!fs.existsSync(libPath)) {
-                    await this.downloadFile(
-                        lib.downloads.artifact.url, 
-                        libPath,
-                        `Library: ${lib.name || `#${i}`}`
-                    );
-                } else {
-                    await this.sendProgress(progress, 'Checking Libraries', `Verified: ${lib.name || `#${i}`}`);
-                }
+                const progress = 10 + (40 * (batchEnd / totalLibraries));
+                await this.sendProgress(progress, 'Downloading Libraries', `Libraries ${batchEnd}/${totalLibraries}`);
             }
 
             // Download client jar only if needed
@@ -1047,22 +1030,33 @@ class MinecraftInstaller extends EventEmitter { // Extend EventEmitter
             const assets = Object.entries(assetIndex.objects);
             const totalAssets = assets.length;
 
-            for (let i = 0; i < totalAssets; i++) {
-                const [name, asset] = assets[i];
-                const progress = 60 + (35 * (i / totalAssets));
-                const hash = asset.hash;
-                const prefix = hash.substring(0, 2);
-                const assetPath = path.join(this.assetsDir, 'objects', prefix, hash);
+            for (let batchStart = 0; batchStart < totalAssets; batchStart += BATCH_SIZE) {
+                const batchEnd = Math.min(batchStart + BATCH_SIZE, totalAssets);
+                const batchPromises = [];
 
-                if (!fs.existsSync(assetPath)) {
-                    await this.downloadFile(
-                        `https://resources.download.minecraft.net/${prefix}/${hash}`,
-                        assetPath,
-                        `Asset: ${name}`
-                    );
-                } else {
-                    await this.sendProgress(progress, 'Verifying Assets', `Checked: ${name}`);
+                for (let i = batchStart; i < batchEnd; i++) {
+                    const [name, asset] = assets[i];
+                    const hash = asset.hash;
+                    const prefix = hash.substring(0, 2);
+                    const assetPath = path.join(this.assetsDir, 'objects', prefix, hash);
+
+                    if (!fs.existsSync(assetPath)) {
+                        batchPromises.push(
+                            this.downloadFile(
+                                `https://resources.download.minecraft.net/${prefix}/${hash}`,
+                                assetPath,
+                                `Asset: ${name}`
+                            )
+                        );
+                    }
                 }
+
+                if (batchPromises.length > 0) {
+                    await Promise.all(batchPromises);
+                }
+
+                const progress = 60 + (35 * (batchEnd / totalAssets));
+                await this.sendProgress(progress, 'Downloading Assets', `Assets ${batchEnd}/${totalAssets}`);
             }
 
             // Save version JSON
