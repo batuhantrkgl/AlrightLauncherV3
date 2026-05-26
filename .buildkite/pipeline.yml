@@ -56,7 +56,7 @@ steps:
           mount-buildkite-agent: true
     command: |
       echo "--- Installing dependencies"
-      if command -v bun &>/dev/null; then bun install; else npm install --prefer-offline --no-audit --no-fund; fi
+      npm install --prefer-offline --no-audit --no-fund 2>&1 | tail -5
 
       echo "--- Building Linux"
       npx electron-builder build --linux --x64 --config.asar=true
@@ -85,7 +85,7 @@ steps:
           mount-buildkite-agent: true
     command: |
       echo "--- Installing dependencies"
-      if command -v bun &>/dev/null; then bun install; else npm install --prefer-offline --no-audit --no-fund; fi
+      npm install --prefer-offline --no-audit --no-fund 2>&1 | tail -5
 
       echo "--- Building Windows"
       npx electron-builder build --win --x64 --config.asar=true
@@ -109,7 +109,7 @@ steps:
           mount-buildkite-agent: true
     command: |
       echo "--- Installing dependencies"
-      if command -v bun &>/dev/null; then bun install; else npm install --prefer-offline --no-audit --no-fund; fi
+      npm install --prefer-offline --no-audit --no-fund 2>&1 | tail -5
 
       echo "--- Building macOS"
       npx electron-builder build --mac --x64 --config.asar=true
