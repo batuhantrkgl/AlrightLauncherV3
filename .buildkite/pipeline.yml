@@ -1,6 +1,8 @@
 env:
   NODE_OPTIONS: "--max-old-space-size=4096"
-  GH_TOKEN: "${GITHUB_TOKEN}"
+
+secrets:
+  - GH_TOKEN
 
 steps:
   - label: ":information_source: Version Info"
