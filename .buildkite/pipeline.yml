@@ -111,6 +111,9 @@ steps:
       echo "--- Installing dependencies"
       npm install --prefer-offline --no-audit --no-fund 2>&1 | tail -5
 
+      echo "--- Installing dmg-license for DMG support"
+      npm install dmg-license --no-save 2>&1 | tail -3
+
       echo "--- Building macOS"
       npx electron-builder build --mac --x64 --config.asar=true
 
