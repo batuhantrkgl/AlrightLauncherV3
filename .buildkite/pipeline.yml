@@ -101,7 +101,7 @@ steps:
     key: "build-macos"
     plugins:
       - docker#v5.12.0:
-          image: "sickcodes/docker-osx:auto"
+          image: "electronuserland/builder:20"
           workdir: "/build"
           environment:
             - GH_TOKEN
