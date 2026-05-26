@@ -4,18 +4,25 @@ env:
 steps:
   - label: ":information_source: Version Info"
     key: "version"
+    plugins:
+      - docker#v5.12.0:
+          image: "node:22-alpine"
+          workdir: "/build"
+          propagate-uid-gid: false
+          mount-buildkite-agent: true
     command: |
-      if [[ "${BUILDKITE_TAG}" =~ ^v ]]; then
+      PKG_VERSION=$(node -p "require('./package.json').version")
+      SHORT_SHA=$(git rev-parse --short HEAD 2>/dev/null || echo "${BUILDKITE_COMMIT:0:7}")
+
+      if [[ -n "${BUILDKITE_TAG}" ]] && [[ "${BUILDKITE_TAG}" =~ ^v ]]; then
         VERSION="${BUILDKITE_TAG}"
         IS_TAG="true"
       else
-        PKG_VERSION=$(node -p "require('./package.json').version")
-        SHORT_SHA=$(git rev-parse --short HEAD)
         VERSION="v${PKG_VERSION}-beta.${SHORT_SHA}"
         IS_TAG="false"
       fi
 
-      if echo "${VERSION}" | grep -qE "beta|alpha|rc"; then
+      if echo "${VERSION}" | grep -qE "beta|alpha|rc" 2>/dev/null; then
         IS_BETA="true"
       else
         IS_BETA="false"
@@ -113,13 +120,21 @@ steps:
 
   - label: ":rocket: Release"
     key: "release"
+    plugins:
+      - docker#v5.12.0:
+          image: "node:22-alpine"
+          workdir: "/build"
+          propagate-uid-gid: false
+          mount-buildkite-agent: true
     command: |
       if [[ "${BUILDKITE_PULL_REQUEST}" != "false" ]]; then
         echo "PR build — skipping release"; exit 0
       fi
-      if [[ "${BUILDKITE_BRANCH}" != "master" ]] && [[ "${BUILDKITE_TAG}" == "" ]]; then
+      if [[ "${BUILDKITE_BRANCH}" != "master" ]] && [[ -z "${BUILDKITE_TAG}" ]]; then
         echo "Non-master, non-tag — skipping release"; exit 0
       fi
+
+      apk add --no-cache git github-cli curl 2>&1 | tail -3
 
       VERSION="$(buildkite-agent meta-data get release-version)"
       IS_TAG="$(buildkite-agent meta-data get is-tag)"
@@ -138,10 +153,11 @@ steps:
         -exec cp {} release-assets/ \; 2>/dev/null
       ls -lh release-assets/
 
-      if ! command -v gh &>/dev/null; then
-        curl -sL "https://github.com/cli/cli/releases/latest/download/gh_$(uname -s)_$(uname -m).tar.gz" | \
-          tar xz --strip-components=2 -C /usr/local/bin '*/gh' 2>/dev/null || true
-      fi
+      # Configure git for tag pushes
+      git config user.email "ci@buildkite"
+      git config user.name "Buildkite CI"
+      git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${BUILDKITE_REPO#https://github.com/}" 2>/dev/null || \
+        git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/batuhantrkgl/AlrightLauncherV3"
 
       if [[ "${IS_TAG}" == "true" ]]; then
         echo "--- Creating GitHub Release ${VERSION}"
