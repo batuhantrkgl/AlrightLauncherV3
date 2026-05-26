@@ -1,5 +1,6 @@
 env:
   NODE_OPTIONS: "--max-old-space-size=4096"
+  GH_TOKEN: "${GITHUB_TOKEN}"
 
 steps:
   - label: ":information_source: Version Info"
@@ -68,8 +69,6 @@ steps:
       buildkite-agent artifact upload "dist/*.snap"
       buildkite-agent artifact upload "dist/*.yml"
       buildkite-agent artifact upload "dist/latest*.yml"
-    env:
-      GH_TOKEN: "${GITHUB_TOKEN}"
 
   - label: ":windows: Build Windows"
     key: "build-windows"
@@ -94,8 +93,6 @@ steps:
       buildkite-agent artifact upload "dist/*.exe"
       buildkite-agent artifact upload "dist/*.yml"
       buildkite-agent artifact upload "dist/latest*.yml"
-    env:
-      GH_TOKEN: "${GITHUB_TOKEN}"
 
   - label: ":mac: Build macOS"
     key: "build-macos"
@@ -119,8 +116,6 @@ steps:
       buildkite-agent artifact upload "dist/*.dmg"
       buildkite-agent artifact upload "dist/*.yml"
       buildkite-agent artifact upload "dist/latest*.yml"
-    env:
-      GH_TOKEN: "${GITHUB_TOKEN}"
 
   - wait: ~
     continue_on_failure: false
@@ -170,8 +165,7 @@ steps:
       # Configure git for tag pushes
       git config user.email "ci@buildkite"
       git config user.name "Buildkite CI"
-      git remote set-url origin "https://x-access-token:$${GH_TOKEN}@github.com/$${BUILDKITE_REPO#https://github.com/}" 2>/dev/null || \
-        git remote set-url origin "https://x-access-token:$${GH_TOKEN}@github.com/batuhantrkgl/AlrightLauncherV3"
+      git remote set-url origin "https://batuhantrkgl:$${GH_TOKEN}@github.com/batuhantrkgl/AlrightLauncherV3.git"
 
       if [[ "$${IS_TAG}" == "true" ]]; then
         echo "--- Creating GitHub Release $${VERSION}"
@@ -196,5 +190,3 @@ steps:
           release-assets/* 2>&1 || \
         echo "Release creation skipped"
       fi
-    env:
-      GH_TOKEN: "${GITHUB_TOKEN}"
