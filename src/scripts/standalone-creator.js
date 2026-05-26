@@ -1,12 +1,22 @@
 const fs = require('fs-extra');
 const path = require('path');
+const os = require('os');
 const logger = require('./logger');
 const MinecraftInstaller = require('./minecraft-installer');
+
+function getAppDataDir() {
+    switch (os.platform()) {
+        case 'win32': return process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming');
+        case 'darwin': return path.join(os.homedir(), 'Library', 'Application Support');
+        case 'linux': return process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config');
+        default: return os.homedir();
+    }
+}
 
 class StandaloneCreator {
     constructor(launcherPath) {
         this.requiredSpace = 1024 * 1024 * 1024;
-        this.launcherPath = launcherPath || path.join(process.env.APPDATA, '.alrightlauncher');
+        this.launcherPath = launcherPath || path.join(getAppDataDir(), '.alrightlauncher');
     }
 
     async getInstalledVersions() {

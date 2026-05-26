@@ -1,11 +1,21 @@
 const fs = require('fs-extra');
 const path = require('path');
+const os = require('os');
 const { v4: uuidv4 } = require('uuid');
 const logger = require('./logger');
 
+function getAppDataDir() {
+    switch (os.platform()) {
+        case 'win32': return process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming');
+        case 'darwin': return path.join(os.homedir(), 'Library', 'Application Support');
+        case 'linux': return process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config');
+        default: return os.homedir();
+    }
+}
+
 class ProfileManager {
     constructor(baseDir) {
-        this.baseDir = baseDir || path.join(process.env.APPDATA, '.alrightlauncher');
+        this.baseDir = baseDir || path.join(getAppDataDir(), '.alrightlauncher');
         // Change from profile.json to launcher_profiles.json for better compatibility
         this.profilesPath = path.join(this.baseDir, 'launcher_profiles.json');
         this.profiles = {};
@@ -388,7 +398,15 @@ class ProfileManager {
     async importMinecraftProfiles(customPath = null) {
         try {
             // Default path for the official launcher profiles
-            const defaultPath = path.join(process.env.APPDATA, '.minecraft', 'launcher_profiles.json');
+            const mcDir = (() => {
+                switch (os.platform()) {
+                    case 'win32': return path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'), '.minecraft');
+                    case 'darwin': return path.join(os.homedir(), 'Library', 'Application Support', 'minecraft');
+                    case 'linux': return path.join(os.homedir(), '.minecraft');
+                    default: return path.join(os.homedir(), '.minecraft');
+                }
+            })();
+            const defaultPath = path.join(mcDir, 'launcher_profiles.json');
             const profilesPath = customPath || defaultPath;
             
             logger.info(`Attempting to import profiles from ${profilesPath}`);

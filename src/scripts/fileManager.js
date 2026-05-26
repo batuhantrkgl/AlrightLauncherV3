@@ -1,6 +1,7 @@
 const path = require('path');
 const fs = require('fs-extra');
 const https = require('https');
+const os = require('os');
 const { app } = require('electron');
 const VersionManager = require('./versionManager');
 const logger = require('./logger');
@@ -16,7 +17,7 @@ class FileManager {
      * @param {string} minecraftDir - Directory for Minecraft files
      */
     constructor(minecraftDir) {
-        this.minecraftDir = minecraftDir || path.join(process.env.APPDATA, '.alrightlauncher', 'minecraft');
+        this.minecraftDir = minecraftDir || path.join(app.getPath('appData'), '.alrightlauncher', 'minecraft');
         this.versionManager = new VersionManager(this.minecraftDir);
         this.tempDir = path.join(app.getPath('temp'), 'alrightlauncher');
         
@@ -87,34 +88,31 @@ class FileManager {
     }
 
     /**
-     * Downloads and installs Java from the provided URL
-     * @param {string} url - URL to the Java installer
+     * Downloads and installs Java
+     * @param {string} url - URL to the Java installer (optional, uses auto-detection if omitted)
      * @returns {Promise<boolean>} Success status
      */
     async downloadJava(url) {
-        if (!url) {
-            throw new Error('No URL provided for Java download');
-        }
-
-        logger.info(`Downloading Java from ${url}`);
-        const filePath = path.join(this.tempDir, 'jdk-installer.msi');
+        const JavaInstaller = require('./java-installer');
+        const installer = new JavaInstaller({ javaVersion: 21 });
         
-        try {
-            await this.downloadFile(url, filePath);
-            logger.info('Java download completed, launching installer');
+        if (url) {
+            logger.info(`Downloading Java from ${url}`);
+            const ext = process.platform === 'win32' ? 'msi' : process.platform === 'darwin' ? 'pkg' : 'tar.gz';
+            const filePath = path.join(this.tempDir, `jdk-installer.${ext}`);
             
-            return await this.launchInstaller(filePath);
-        } catch (error) {
-            // Clean up the file if it exists
             try {
-                await fs.remove(filePath);
-            } catch (cleanupError) {
-                logger.warn('Failed to clean up installer file:', cleanupError);
+                await this._downloadFile(url, filePath);
+                logger.info('Java download completed, launching installer');
+                return await installer.runInstaller(filePath);
+            } catch (error) {
+                try { await fs.remove(filePath); } catch { /* ignore */ }
+                logger.error('Java download/installation failed:', error);
+                throw error;
             }
-            
-            logger.error('Java download/installation failed:', error);
-            throw error;
         }
+        
+        return await installer.install(() => {});
     }
     
     /**
@@ -124,7 +122,7 @@ class FileManager {
      * @param {string} destPath - Destination file path
      * @returns {Promise<void>}
      */
-    async downloadFile(url, destPath) {
+    async _downloadFile(url, destPath) {
         return new Promise((resolve, reject) => {
             const file = fs.createWriteStream(destPath);
             
@@ -133,8 +131,7 @@ class FileManager {
                 headers: { 'User-Agent': 'AlrightLauncher' } 
             }, (response) => {
                 if (response.statusCode === 302 || response.statusCode === 301) {
-                    // Handle redirects
-                    this.downloadFile(response.headers.location, destPath)
+                    this._downloadFile(response.headers.location, destPath)
                         .then(resolve)
                         .catch(reject);
                     return;
@@ -145,7 +142,6 @@ class FileManager {
                     return;
                 }
                 
-                // Calculate and log download progress
                 const totalSize = parseInt(response.headers['content-length'], 10);
                 let downloadedSize = 0;
                 
@@ -153,13 +149,12 @@ class FileManager {
                     downloadedSize += chunk.length;
                     if (totalSize) {
                         const progress = Math.round((downloadedSize / totalSize) * 100);
-                        if (progress % 10 === 0) { // Log every 10%
+                        if (progress % 10 === 0) {
                             logger.info(`Download progress: ${progress}%`);
                         }
                     }
                 });
                 
-                // Pipe the download to the file
                 response.pipe(file);
                 
                 file.on('finish', () => {
@@ -168,47 +163,20 @@ class FileManager {
                 });
                 
                 file.on('error', (err) => {
-                    fs.unlink(destPath, () => {}); // Delete the file on error
+                    fs.unlink(destPath, () => {});
                     reject(err);
                 });
             });
             
             request.on('error', (err) => {
-                fs.unlink(destPath, () => {}); // Delete the file on error
+                fs.unlink(destPath, () => {});
                 reject(err);
             });
             
-            // Set timeout for the request
             request.setTimeout(30000, () => {
                 request.abort();
                 reject(new Error('Download request timed out'));
             });
-        });
-    }
-    
-    /**
-     * Launches an MSI installer
-     * @private
-     * @param {string} filePath - Path to the installer file
-     * @returns {Promise<boolean>} Success status
-     */
-    async launchInstaller(filePath) {
-        return new Promise((resolve, reject) => {
-            const installer = spawn('msiexec', ['/i', filePath], {
-                detached: true,
-                stdio: 'ignore',
-                shell: true,
-                windowsHide: false
-            });
-            
-            installer.on('error', (err) => {
-                logger.error('Failed to start installer:', err);
-                reject(err);
-            });
-            
-            // Detach the process so it continues running independently
-            installer.unref();
-            resolve(true);
         });
     }
     

@@ -1,0 +1,177 @@
+env:
+  ELECTRON_CACHE: "${HOME}/.cache/electron"
+  ELECTRON_BUILDER_CACHE: "${HOME}/.cache/electron-builder"
+  NODE_OPTIONS: "--max-old-space-size=4096"
+
+steps:
+  - label: ":information_source: Version Info"
+    key: "version"
+    agents:
+      queue: "default"
+    command: |
+      # Determine version and release type
+      if [[ "${BUILDKITE_TAG}" =~ ^v ]]; then
+        VERSION="${BUILDKITE_TAG}"
+        IS_TAG="true"
+      else
+        PKG_VERSION=$(node -p "require('./package.json').version")
+        SHORT_SHA=$(git rev-parse --short HEAD)
+        VERSION="v${PKG_VERSION}-beta.${SHORT_SHA}"
+        IS_TAG="false"
+      fi
+
+      if echo "${VERSION}" | grep -qE "beta|alpha|rc"; then
+        IS_BETA="true"
+      else
+        IS_BETA="false"
+      fi
+
+      buildkite-agent meta-data set "release-version" "${VERSION}"
+      buildkite-agent meta-data set "is-tag" "${IS_TAG}"
+      buildkite-agent meta-data set "is-beta" "${IS_BETA}"
+
+      echo "Version: ${VERSION}"
+      echo "Is tag: ${IS_TAG}"
+      echo "Is beta: ${IS_BETA}"
+
+  - wait
+
+  - label: ":windows: Build Windows"
+    key: "build-windows"
+    agents:
+      queue: "windows"
+    command: |
+      echo "--- Installing dependencies"
+      # Try bun first (primary), fall back to npm
+      if command -v bun &>/dev/null; then
+        bun install 2>&1 | tail -5
+      else
+        npm install --prefer-offline --no-audit --no-fund 2>&1 | tail -5
+      fi
+
+      echo "--- Building for Windows"
+      npx electron-builder build --win --x64 --config.asar=true 2>&1
+
+      echo "--- Uploading artifacts"
+      buildkite-agent artifact upload "dist/*.exe"
+      buildkite-agent artifact upload "dist/*.yml"
+      buildkite-agent artifact upload "dist/latest*.yml"
+    env:
+      GH_TOKEN: "${GITHUB_TOKEN}"
+
+  - label: ":mac: Build macOS"
+    key: "build-macos"
+    agents:
+      queue: "macos"
+    command: |
+      echo "--- Installing dependencies"
+      if command -v bun &>/dev/null; then
+        bun install 2>&1 | tail -5
+      else
+        npm install --prefer-offline --no-audit --no-fund 2>&1 | tail -5
+      fi
+
+      echo "--- Building for macOS"
+      npx electron-builder build --mac --x64 --config.asar=true 2>&1
+
+      echo "--- Uploading artifacts"
+      buildkite-agent artifact upload "dist/*.dmg"
+      buildkite-agent artifact upload "dist/*.yml"
+      buildkite-agent artifact upload "dist/latest*.yml"
+    env:
+      GH_TOKEN: "${GITHUB_TOKEN}"
+
+  - label: ":linux: Build Linux"
+    key: "build-linux"
+    agents:
+      queue: "linux"
+    command: |
+      echo "--- Installing dependencies"
+      if command -v bun &>/dev/null; then
+        bun install 2>&1 | tail -5
+      else
+        npm install --prefer-offline --no-audit --no-fund 2>&1 | tail -5
+      fi
+
+      echo "--- Building for Linux"
+      npx electron-builder build --linux --x64 --config.asar=true 2>&1
+
+      echo "--- Uploading artifacts"
+      buildkite-agent artifact upload "dist/*.AppImage"
+      buildkite-agent artifact upload "dist/*.deb"
+      buildkite-agent artifact upload "dist/*.rpm"
+      buildkite-agent artifact upload "dist/*.snap"
+      buildkite-agent artifact upload "dist/*.yml"
+      buildkite-agent artifact upload "dist/latest*.yml"
+    env:
+      GH_TOKEN: "${GITHUB_TOKEN}"
+
+  - wait: ~
+    continue_on_failure: false
+
+  - label: ":rocket: Release"
+    key: "release"
+    agents:
+      queue: "default"
+    command: |
+      # Skip release for pull requests
+      if [[ "${BUILDKITE_PULL_REQUEST}" != "false" ]]; then
+        echo "Pull request build — skipping release"
+        exit 0
+      fi
+
+      # Skip release for non-master branches (unless it's a tag)
+      if [[ "${BUILDKITE_BRANCH}" != "master" ]] && [[ "${BUILDKITE_TAG}" == "" ]]; then
+        echo "Non-master branch without tag — skipping release"
+        exit 0
+      fi
+
+      VERSION="$(buildkite-agent meta-data get release-version)"
+      IS_TAG="$(buildkite-agent meta-data get is-tag)"
+      IS_BETA="$(buildkite-agent meta-data get is-beta)"
+
+      echo "--- Downloading all build artifacts"
+      for step in build-windows build-macos build-linux; do
+        buildkite-agent artifact download "dist/*" . --step "${step}" 2>&1
+      done
+
+      echo "--- Collected artifacts"
+      mkdir -p release-assets
+      find . \( -name "*.exe" -o -name "*.dmg" -o -name "*.AppImage" \
+                -o -name "*.deb" -o -name "*.rpm" -o -name "*.snap" \
+                -o -name "latest*.yml" -o -name "latest*.yaml" \) \
+        -exec cp {} release-assets/ \; 2>/dev/null
+      ls -lh release-assets/
+
+      if ! command -v gh &>/dev/null; then
+        echo "--- gh CLI not found — downloading"
+        curl -sL "https://github.com/cli/cli/releases/latest/download/gh_$(uname -s)_$(uname -m).tar.gz" | \
+          tar xz --strip-components=2 -C /usr/local/bin '*/gh' 2>/dev/null || true
+      fi
+
+      if [[ "${IS_TAG}" == "true" ]]; then
+        echo "--- Creating GitHub Release for tag ${VERSION}"
+        gh release create "${VERSION}" \
+          --title "AlrightLauncher ${VERSION}" \
+          --notes "$(git log -20 --oneline)" \
+          --prerelease="${IS_BETA}" \
+          --draft=false \
+          release-assets/* 2>&1
+      else
+        echo "--- Creating Nightly Release"
+        SHORT_SHA=$(git rev-parse --short HEAD)
+        NIGHTLY_TAG="nightly-${SHORT_SHA}"
+
+        git tag -f "${NIGHTLY_TAG}" 2>/dev/null
+        git push origin "${NIGHTLY_TAG}" 2>&1 || true
+
+        gh release create "${NIGHTLY_TAG}" \
+          --title "AlrightLauncher ${NIGHTLY_TAG} (${VERSION})" \
+          --notes "Nightly build from ${BUILDKITE_BRANCH}@${BUILDKITE_COMMIT}" \
+          --prerelease=true \
+          --draft=false \
+          release-assets/* 2>&1 || \
+        echo "Release creation skipped (already exists or tag conflict)"
+      fi
+    env:
+      GH_TOKEN: "${GITHUB_TOKEN}"

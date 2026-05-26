@@ -1,12 +1,22 @@
 const fs = require('fs-extra');
 const path = require('path');
+const os = require('os');
 const fetch = require('node-fetch');
 const crypto = require('crypto');
 const logger = require('./logger');
 
+function getAppDataDir() {
+    switch (os.platform()) {
+        case 'win32': return process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming');
+        case 'darwin': return path.join(os.homedir(), 'Library', 'Application Support');
+        case 'linux': return process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config');
+        default: return os.homedir();
+    }
+}
+
 class AssetManager {
     constructor(baseDir) {
-        this.baseDir = baseDir || path.join(process.env.APPDATA, '.alrightlauncher');
+        this.baseDir = baseDir || path.join(getAppDataDir(), '.alrightlauncher');
         this.assetsDir = path.join(this.baseDir, 'assets');
         this.indexesDir = path.join(this.assetsDir, 'indexes');
         this.objectsDir = path.join(this.assetsDir, 'objects');

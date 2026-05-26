@@ -1,10 +1,20 @@
 const fs = require('fs-extra');
 const path = require('path');
+const os = require('os');
 const crypto = require('crypto');
 const logger = require('./logger');
 const { promisify } = require('util');
 const { pipeline } = require('stream');
 const pipelineAsync = promisify(pipeline);
+
+function getAppDataDir() {
+    switch (os.platform()) {
+        case 'win32': return process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming');
+        case 'darwin': return path.join(os.homedir(), 'Library', 'Application Support');
+        case 'linux': return process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config');
+        default: return os.homedir();
+    }
+}
 
 /**
  * Handles file verification and checksum management for Minecraft files
@@ -15,7 +25,7 @@ class FileVerifier {
      * @param {string} minecraftDir - Directory for Minecraft files
      */
     constructor(minecraftDir) {
-        this.minecraftDir = minecraftDir || path.join(process.env.APPDATA, '.alrightlauncher', 'minecraft');
+        this.minecraftDir = minecraftDir || path.join(getAppDataDir(), '.alrightlauncher', 'minecraft');
         this.checksumDir = path.join(this.minecraftDir, 'checksums');
         this.ensureDirectoryExists(this.checksumDir);
     }

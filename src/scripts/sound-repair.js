@@ -7,12 +7,22 @@
 
 const fs = require('fs-extra');
 const path = require('path');
+const os = require('os');
 const fetch = require('node-fetch');
 const logger = require('./logger');
 
+function getAppDataDir() {
+    switch (os.platform()) {
+        case 'win32': return process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming');
+        case 'darwin': return path.join(os.homedir(), 'Library', 'Application Support');
+        case 'linux': return process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config');
+        default: return os.homedir();
+    }
+}
+
 class SoundRepairUtility {
     constructor(minecraftDir) {
-        this.baseDir = minecraftDir || path.join(process.env.APPDATA, '.alrightlauncher');
+        this.baseDir = minecraftDir || path.join(getAppDataDir(), '.alrightlauncher');
         this.assetsDir = path.join(this.baseDir, 'assets');
         
         // Sound files that are referenced in code but don't actually exist in vanilla Minecraft

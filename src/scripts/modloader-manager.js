@@ -1,11 +1,21 @@
 const fs = require('fs-extra');
 const path = require('path');
+const os = require('os');
 const fetch = require('node-fetch');
 const logger = require('./logger');
 
+function getAppDataDir() {
+  switch (os.platform()) {
+    case 'win32': return process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming');
+    case 'darwin': return path.join(os.homedir(), 'Library', 'Application Support');
+    case 'linux': return process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config');
+    default: return os.homedir();
+  }
+}
+
 class ModLoaderManager {
     constructor(baseDir) {
-        this.baseDir = baseDir || path.join(process.env.APPDATA, '.alrightlauncher');
+        this.baseDir = baseDir || path.join(getAppDataDir(), '.alrightlauncher');
         this.versionsDir = path.join(this.baseDir, 'versions');
     }
 

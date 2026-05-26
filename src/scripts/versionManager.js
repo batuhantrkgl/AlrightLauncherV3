@@ -1,12 +1,22 @@
 const { ipcMain } = require('electron');
 const path = require('path');
 const fs = require('fs-extra');
+const os = require('os');
 const FileVerifier = require('./fileVerifier');
 const logger = require('./logger');
 
+function getAppDataDir() {
+  switch (os.platform()) {
+    case 'win32': return process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming');
+    case 'darwin': return path.join(os.homedir(), 'Library', 'Application Support');
+    case 'linux': return process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config');
+    default: return os.homedir();
+  }
+}
+
 class VersionManager {
     constructor(minecraftDir) {
-        this.minecraftDir = minecraftDir || path.join(process.env.APPDATA, '.alrightlauncher', 'minecraft');
+        this.minecraftDir = minecraftDir || path.join(getAppDataDir(), '.alrightlauncher', 'minecraft');
         this.verifier = new FileVerifier(this.minecraftDir);
         
         // Ensure core directories exist

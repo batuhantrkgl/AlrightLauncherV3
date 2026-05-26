@@ -1,5 +1,6 @@
 const fs = require('fs-extra');
 const path = require('path');
+const os = require('os');
 const zlib = require('zlib');
 const { v4: uuidv4 } = require('uuid');
 const fetch = require('node-fetch');
@@ -65,11 +66,20 @@ const LOG_LEVELS = {
     NONE: 999 // Used for disabling logging
 };
 
+function _getAppDataDir() {
+    switch (os.platform()) {
+        case 'win32': return process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming');
+        case 'darwin': return path.join(os.homedir(), 'Library', 'Application Support');
+        case 'linux': return process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config');
+        default: return os.homedir();
+    }
+}
+
 class Logger {
     constructor(options = {}) {
         this.logs = [];
         this.listeners = new Set();
-        this.baseDir = options.baseDir || path.join(process.env.APPDATA, '.alrightlauncher');
+        this.baseDir = options.baseDir || path.join(_getAppDataDir(), '.alrightlauncher');
         this.logsDir = path.join(this.baseDir, 'logs');
         this.logFile = path.join(this.logsDir, 'launcher.log');
         

@@ -659,11 +659,10 @@ class MinecraftLauncher {
   isLibraryCompatible(library) {
     if (!library.rules) return true;
 
+    const osName = this.getOSName();
     let compatible = false;
     for (const rule of library.rules) {
       if (rule.os) {
-        const osName =
-          process.platform === "win32" ? "windows" : process.platform;
         if (rule.os.name === osName) {
           compatible = rule.action === "allow";
         }
@@ -1970,11 +1969,10 @@ class MinecraftLauncher {
   }
 
   checkRules(rules) {
+    const osName = this.getOSName();
     for (const rule of rules) {
       if (rule.os) {
         // Check operating system rules
-        const osName =
-          process.platform === "win32" ? "windows" : process.platform;
         if (rule.os.name && rule.os.name !== osName) {
           return rule.action !== "allow";
         }

@@ -11,9 +11,9 @@ const discordRPC = require('./discord-rpc'); // Import Discord RPC
 
 class MinecraftInstaller extends EventEmitter { // Extend EventEmitter
     constructor() {
-        super(); // Initialize EventEmitter
+        super();
         
-        this.baseDir = path.join(process.env.APPDATA, '.alrightlauncher');
+        this.baseDir = path.join(this._getAppDataDir(), '.alrightlauncher');
         this.versionsDir = path.join(this.baseDir, 'versions');
         this.assetsDir = path.join(this.baseDir, 'assets');
         this.librariesDir = path.join(this.baseDir, 'libraries');
@@ -32,6 +32,15 @@ class MinecraftInstaller extends EventEmitter { // Extend EventEmitter
         this.isDownloading = false;
         this.maxConcurrent = 16;
         this.downloadChunkSize = 1024 * 1024;
+    }
+
+    _getAppDataDir() {
+        switch (os.platform()) {
+            case 'win32': return process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming');
+            case 'darwin': return path.join(os.homedir(), 'Library', 'Application Support');
+            case 'linux': return process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config');
+            default: return os.homedir();
+        }
     }
 
     createDirectories() {
@@ -403,12 +412,14 @@ class MinecraftInstaller extends EventEmitter { // Extend EventEmitter
 
     isLibraryCompatible(library) {
         if (!library.rules) return true;
-        
+
+        const osName = this.getOSName();
         let compatible = false;
         for (const rule of library.rules) {
             if (rule.os) {
-                const osName = process.platform === 'win32' ? 'windows' : process.platform;
-                if (rule.os.name === osName) {
+                const matches = rule.os.name === osName ||
+                    (osName === 'macos' && rule.os.name === 'osx');
+                if (matches) {
                     compatible = rule.action === 'allow';
                 }
             } else {
@@ -814,15 +825,6 @@ class MinecraftInstaller extends EventEmitter { // Extend EventEmitter
         }
 
         logger.info('All native libraries verified successfully');
-    }
-
-    getOSName() {
-        switch (process.platform) {
-            case 'win32': return 'windows';
-            case 'darwin': return 'osx';
-            case 'linux': return 'linux';
-            default: return process.platform;
-        }
     }
 
     async extractNative(sourcePath, targetDir, extractRules, isLWJGL = false) {
