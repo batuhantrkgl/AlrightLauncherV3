@@ -111,13 +111,11 @@ steps:
       echo "--- Installing dependencies"
       npm install --prefer-offline --no-audit --no-fund 2>&1 | tail -5
 
-      echo "--- Installing dmg-license for DMG support"
-      npm install dmg-license --no-save 2>&1 | tail -3
-
-      echo "--- Building macOS"
-      npx electron-builder build --mac --x64 --config.asar=true
+      echo "--- Building macOS (zip target — DMG needs macOS host)"
+      npx electron-builder build --mac --x64 --config.asar=true --config.mac.target=zip
 
       echo "--- Uploading artifacts"
+      buildkite-agent artifact upload "dist/*.zip"
       buildkite-agent artifact upload "dist/*.dmg"
       buildkite-agent artifact upload "dist/*.yml"
       buildkite-agent artifact upload "dist/latest*.yml"
@@ -163,7 +161,7 @@ steps:
 
       echo "--- Collecting release assets"
       mkdir -p release-assets
-      find . \( -name "*.exe" -o -name "*.dmg" -o -name "*.AppImage" \
+      find . \( -name "*.exe" -o -name "*.dmg" -o -name "*.zip" -o -name "*.AppImage" \
                 -o -name "*.deb" -o -name "*.rpm" -o -name "*.snap" \
                 -o -name "latest*.yml" -o -name "latest*.yaml" \) \
         -exec cp {} release-assets/ \; 2>/dev/null
