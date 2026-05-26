@@ -8,31 +8,37 @@ steps:
       - docker#v5.12.0:
           image: "node:22-alpine"
           workdir: "/build"
+          environment:
+            - BUILDKITE_TAG
+            - BUILDKITE_COMMIT
+            - BUILDKITE_BRANCH
+            - BUILDKITE_PULL_REQUEST
+            - BUILDKITE_REPO
           propagate-uid-gid: false
           mount-buildkite-agent: true
     command: |
-      PKG_VERSION=$(node -p "require('./package.json').version")
-      SHORT_SHA=$(git rev-parse --short HEAD 2>/dev/null || echo "${BUILDKITE_COMMIT:0:7}")
+      PKG_VERSION=$$(node -p "require('./package.json').version")
+      SHORT_SHA=$$(git rev-parse --short HEAD 2>/dev/null || echo "$${BUILDKITE_COMMIT:0:7}")
 
-      if [[ -n "${BUILDKITE_TAG}" ]] && [[ "${BUILDKITE_TAG}" =~ ^v ]]; then
-        VERSION="${BUILDKITE_TAG}"
+      if [[ -n "$${BUILDKITE_TAG}" ]] && [[ "$${BUILDKITE_TAG}" =~ ^v ]]; then
+        VERSION="$${BUILDKITE_TAG}"
         IS_TAG="true"
       else
-        VERSION="v${PKG_VERSION}-beta.${SHORT_SHA}"
+        VERSION="v$${PKG_VERSION}-beta.$${SHORT_SHA}"
         IS_TAG="false"
       fi
 
-      if echo "${VERSION}" | grep -qE "beta|alpha|rc" 2>/dev/null; then
+      if echo "$${VERSION}" | grep -qE "beta|alpha|rc" 2>/dev/null; then
         IS_BETA="true"
       else
         IS_BETA="false"
       fi
 
-      buildkite-agent meta-data set "release-version" "${VERSION}"
-      buildkite-agent meta-data set "is-tag" "${IS_TAG}"
-      buildkite-agent meta-data set "is-beta" "${IS_BETA}"
+      buildkite-agent meta-data set "release-version" "$${VERSION}"
+      buildkite-agent meta-data set "is-tag" "$${IS_TAG}"
+      buildkite-agent meta-data set "is-beta" "$${IS_BETA}"
 
-      echo "Version: ${VERSION}  Is tag: ${IS_TAG}  Is beta: ${IS_BETA}"
+      echo "Version: $${VERSION}  Is tag: $${IS_TAG}  Is beta: $${IS_BETA}"
 
   - wait
 
@@ -124,25 +130,32 @@ steps:
       - docker#v5.12.0:
           image: "node:22-alpine"
           workdir: "/build"
+          environment:
+            - BUILDKITE_TAG
+            - BUILDKITE_COMMIT
+            - BUILDKITE_BRANCH
+            - BUILDKITE_PULL_REQUEST
+            - BUILDKITE_REPO
+            - GH_TOKEN
           propagate-uid-gid: false
           mount-buildkite-agent: true
     command: |
-      if [[ "${BUILDKITE_PULL_REQUEST}" != "false" ]]; then
+      if [[ "$${BUILDKITE_PULL_REQUEST}" != "false" ]]; then
         echo "PR build — skipping release"; exit 0
       fi
-      if [[ "${BUILDKITE_BRANCH}" != "master" ]] && [[ -z "${BUILDKITE_TAG}" ]]; then
+      if [[ "$${BUILDKITE_BRANCH}" != "master" ]] && [[ -z "$${BUILDKITE_TAG}" ]]; then
         echo "Non-master, non-tag — skipping release"; exit 0
       fi
 
       apk add --no-cache git github-cli curl 2>&1 | tail -3
 
-      VERSION="$(buildkite-agent meta-data get release-version)"
-      IS_TAG="$(buildkite-agent meta-data get is-tag)"
-      IS_BETA="$(buildkite-agent meta-data get is-beta)"
+      VERSION=$$(buildkite-agent meta-data get release-version)
+      IS_TAG=$$(buildkite-agent meta-data get is-tag)
+      IS_BETA=$$(buildkite-agent meta-data get is-beta)
 
       echo "--- Downloading all artifacts"
       for step in build-linux build-windows build-macos; do
-        buildkite-agent artifact download "dist/*" . --step "${step}" 2>&1 || true
+        buildkite-agent artifact download "dist/*" . --step "$${step}" 2>&1 || true
       done
 
       echo "--- Collecting release assets"
@@ -156,27 +169,27 @@ steps:
       # Configure git for tag pushes
       git config user.email "ci@buildkite"
       git config user.name "Buildkite CI"
-      git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${BUILDKITE_REPO#https://github.com/}" 2>/dev/null || \
-        git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/batuhantrkgl/AlrightLauncherV3"
+      git remote set-url origin "https://x-access-token:$${GH_TOKEN}@github.com/$${BUILDKITE_REPO#https://github.com/}" 2>/dev/null || \
+        git remote set-url origin "https://x-access-token:$${GH_TOKEN}@github.com/batuhantrkgl/AlrightLauncherV3"
 
-      if [[ "${IS_TAG}" == "true" ]]; then
-        echo "--- Creating GitHub Release ${VERSION}"
-        gh release create "${VERSION}" \
-          --title "AlrightLauncher ${VERSION}" \
-          --notes "$(git log -20 --oneline)" \
-          --prerelease="${IS_BETA}" \
+      if [[ "$${IS_TAG}" == "true" ]]; then
+        echo "--- Creating GitHub Release $${VERSION}"
+        gh release create "$${VERSION}" \
+          --title "AlrightLauncher $${VERSION}" \
+          --notes "$$(git log -20 --oneline)" \
+          --prerelease="$${IS_BETA}" \
           --draft=false \
           release-assets/*
       else
         echo "--- Creating Nightly Release"
-        SHORT_SHA=$(git rev-parse --short HEAD)
-        NIGHTLY_TAG="nightly-${SHORT_SHA}"
-        git tag -f "${NIGHTLY_TAG}"
-        git push origin "${NIGHTLY_TAG}" 2>&1 || true
+        SHORT_SHA=$$(git rev-parse --short HEAD)
+        NIGHTLY_TAG="nightly-$${SHORT_SHA}"
+        git tag -f "$${NIGHTLY_TAG}"
+        git push origin "$${NIGHTLY_TAG}" 2>&1 || true
 
-        gh release create "${NIGHTLY_TAG}" \
-          --title "AlrightLauncher ${NIGHTLY_TAG} (${VERSION})" \
-          --notes "Nightly build from ${BUILDKITE_BRANCH}@${BUILDKITE_COMMIT}" \
+        gh release create "$${NIGHTLY_TAG}" \
+          --title "AlrightLauncher $${NIGHTLY_TAG} ($${VERSION})" \
+          --notes "Nightly build from $${BUILDKITE_BRANCH}@$${BUILDKITE_COMMIT}" \
           --prerelease=true \
           --draft=false \
           release-assets/* 2>&1 || \
