@@ -36,12 +36,7 @@ class MinecraftLauncher {
     // Track cached Java version for path reuse
     this._cachedJavaVersion = 0;
 
-    // Ensure all required directories exist
-    fs.ensureDirSync(this.baseDir);
-    fs.ensureDirSync(this.versionsDir);
-    fs.ensureDirSync(this.librariesDir);
-    fs.ensureDirSync(this.assetsDir);
-
+    // Directories are pre-created by ensureDirectories() before this is called
     logger.info(
       `MinecraftLauncher initialized with base directory: ${this.baseDir}`
     );

@@ -1,62 +1,16 @@
 const http = require('http');
 const fetch = require('node-fetch');
 const logger = require('./logger');
-const net = require('net');
 
 class MockAuthServer {
     constructor(authService) {
         this.server = null;
-        this.port = 25566; // Default port that won't conflict with Minecraft
-        this.authService = authService; // Store the auth service reference
-    }
-
-    // Check if a port is available
-    isPortAvailable(port) {
-        return new Promise((resolve) => {
-            const server = net.createServer();
-            
-            server.once('error', (err) => {
-                // If the error is EADDRINUSE, port is not available
-                if (err.code === 'EADDRINUSE') {
-                    resolve(false);
-                } else {
-                    // For other errors, we still consider it unavailable
-                    resolve(false);
-                }
-            });
-            
-            server.once('listening', () => {
-                // Close the server and return true - port is available
-                server.close();
-                resolve(true);
-            });
-            
-            server.listen(port, '127.0.0.1');
-        });
-    }
-
-    // Find an available port starting from the default
-    async findAvailablePort(startPort = 25566, maxAttempts = 20) {
-        let port = startPort;
-        let attempts = 0;
-        
-        while (attempts < maxAttempts) {
-            if (await this.isPortAvailable(port)) {
-                return port;
-            }
-            port++;
-            attempts++;
-        }
-        
-        throw new Error(`Could not find an available port after ${maxAttempts} attempts`);
+        this.port = 0; // Use port 0 to let OS assign available port
+        this.authService = authService;
     }
 
     async start() {
         try {
-            // Find an available port
-            this.port = await this.findAvailablePort();
-            logger.info(`Using port ${this.port} for auth proxy server`);
-            
             this.server = http.createServer(async (req, res) => {
                 res.setHeader('Content-Type', 'application/json');
                 res.setHeader('Access-Control-Allow-Origin', '*');
@@ -111,7 +65,8 @@ class MockAuthServer {
             });
 
             return new Promise((resolve, reject) => {
-                this.server.listen(this.port, '127.0.0.1', () => {
+                this.server.listen(0, '127.0.0.1', () => {
+                    this.port = this.server.address().port;
                     logger.info(`Auth proxy server running on port ${this.port}`);
                     resolve(this.port);
                 });

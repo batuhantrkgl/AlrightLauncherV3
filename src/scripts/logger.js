@@ -121,9 +121,7 @@ class Logger {
 
         // Queue for remote logging
         this.remoteLoggingQueue = [];
-        
-        // Initialize directories
-        this._initializeDirectories();
+        this._dirInitialized = false;
         
         // Set up remote logging interval if URL is provided
         if (this.config.remoteLoggingUrl) {
@@ -422,6 +420,10 @@ class Logger {
      */
     _writeToFile(entry) {
         try {
+            if (!this._dirInitialized) {
+                fs.ensureDirSync(this.logsDir);
+                this._dirInitialized = true;
+            }
             // Format the log entry for file output
             let line;
             if (this.config.structuredLogging) {

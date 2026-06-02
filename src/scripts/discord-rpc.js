@@ -31,70 +31,41 @@ class DiscordRPCClient {
   constructor() {
     this.rpc = new DiscordRPC.Client({ transport: 'ipc' });
     this.isConnected = false;
+    this.wasEverConnected = false;
     this.version = app.getVersion();
     this.clientId = CLIENT_ID;
     this.startTimestamp = new Date();
-    this.reconnectAttempts = 0;
-    this.maxReconnectAttempts = 5;
-    this.reconnectTimeout = null;
   }
 
   async initialize() {
-    try {
-      // Register event handlers
-      this.rpc.on('ready', () => {
-        this.isConnected = true;
-        this.reconnectAttempts = 0;
-        console.log('Discord RPC connected');
-        this.setDefaultActivity();
-      });
+    this.rpc.on('ready', () => {
+      this.isConnected = true;
+      this.wasEverConnected = true;
+      console.log('Discord RPC connected');
+      this.setDefaultActivity();
+    });
 
-      this.rpc.on('disconnected', () => {
-        console.log('Discord RPC disconnected');
-        this.isConnected = false;
-        this.attemptReconnect();
-      });
+    this.rpc.on('disconnected', () => {
+      console.log('Discord RPC disconnected');
+      this.isConnected = false;
+    });
 
-      // Connect to Discord
-      await this.connect();
-      return true;
-    } catch (error) {
-      console.error('Failed to initialize Discord RPC:', error);
-      this.attemptReconnect();
-      return false;
-    }
+    await this.connectWithTimeout(3000);
+    return this.isConnected;
   }
 
-  async connect() {
+  async connectWithTimeout(ms) {
+    const loginPromise = this.rpc.login({ clientId: this.clientId });
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('connect timeout')), ms)
+    );
     try {
-      await this.rpc.login({ clientId: this.clientId });
+      await Promise.race([loginPromise, timeoutPromise]);
       return true;
     } catch (error) {
-      console.error('Discord RPC login failed:', error);
+      console.error('Discord RPC login failed:', error.message);
       return false;
     }
-  }
-
-  attemptReconnect() {
-    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-      console.log(`Max reconnect attempts (${this.maxReconnectAttempts}) reached. Giving up.`);
-      return;
-    }
-
-    if (this.reconnectTimeout) {
-      clearTimeout(this.reconnectTimeout);
-    }
-
-    this.reconnectAttempts++;
-    const delay = Math.min(30000, Math.pow(2, this.reconnectAttempts) * 1000);
-    
-    console.log(`Attempting to reconnect in ${delay/1000} seconds (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})`);
-    
-    this.reconnectTimeout = setTimeout(async () => {
-      if (!this.isConnected) {
-        await this.connect();
-      }
-    }, delay);
   }
 
   /**
@@ -224,11 +195,6 @@ class DiscordRPCClient {
   }
 
   shutdown() {
-    if (this.reconnectTimeout) {
-      clearTimeout(this.reconnectTimeout);
-      this.reconnectTimeout = null;
-    }
-    
     if (this.isConnected) {
       try {
         this.rpc.destroy();

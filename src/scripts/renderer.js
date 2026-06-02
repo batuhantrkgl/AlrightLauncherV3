@@ -502,182 +502,117 @@ function addLogEntry(entry) {
 window.minecraft.logger.addLogListener(addLogEntry);
 
 window.addEventListener('DOMContentLoaded', async () => {
-    window.minecraft.logger.info('=== Loading saved settings ===');
-    
-    // Initialize DOM element references after the document has loaded
+    window.minecraft.logger.info('=== DOM loaded ===');
+
+    // === Phase 1: DOM references & event listeners (sync, must be fast) ===
     settingsModal = document.getElementById('settingsModal');
     settingsToggle = document.querySelector('.settings-toggle');
     settingsClose = document.querySelector('#settingsModal .modal-close');
-    
-    // Initialize toggle references
     offlineToggle = document.getElementById('offline-toggle');
     skipVerificationToggle = document.getElementById('skip-verification-toggle');
-    
-    // Initialize RAM settings
-    await initializeRamSettings();
-    
-    // Setup settings modal event listeners once the elements are available
+
     if (settingsToggle) {
         settingsToggle.addEventListener('click', () => {
-            if (settingsModal) {
-                settingsModal.classList.add('active');
-                window.minecraft.logger.info('Settings modal opened');
-            }
+            if (settingsModal) settingsModal.classList.add('active');
         });
     }
-    
     if (settingsClose) {
         settingsClose.addEventListener('click', () => {
-            if (settingsModal) {
-                settingsModal.classList.remove('active');
-                window.minecraft.logger.info('Settings modal closed');
-            }
+            if (settingsModal) settingsModal.classList.remove('active');
         });
     }
-    
     if (settingsModal) {
         settingsModal.addEventListener('click', (e) => {
-            // If the click is on the modal background, not on the content
-            if (e.target === settingsModal) {
-                settingsModal.classList.remove('active');
-            }
+            if (e.target === settingsModal) settingsModal.classList.remove('active');
         });
     }
-    
-    // Tab switching functionality
+
     const settingsTabs = document.querySelectorAll('.settings-tab');
     const tabContents = document.querySelectorAll('.tab-content');
-    
     settingsTabs.forEach(tab => {
         tab.addEventListener('click', () => {
             const targetTab = tab.getAttribute('data-tab');
-            
-            // Remove active class from all tabs and contents
             settingsTabs.forEach(t => t.classList.remove('active'));
             tabContents.forEach(c => c.classList.remove('active'));
-            
-            // Add active class to clicked tab and corresponding content
             tab.classList.add('active');
             const targetElement = document.getElementById(targetTab);
-            if (targetElement) {
-                targetElement.classList.add('active');
-            }
+            if (targetElement) targetElement.classList.add('active');
         });
     });
-    
-    // Load previously used username
+
+    document.querySelector('.play-button')?.addEventListener('click', playGame);
+
+    // === Phase 2: localStorage reads (batched, sync but fast) ===
     const savedUsername = localStorage.getItem('lastUsername');
-    if (savedUsername && usernameInput) {
-        usernameInput.value = savedUsername;
-        window.minecraft.logger.info(`Loaded saved username: ${savedUsername}`);
-    }
-    
-    // Load last played version and update the UI
     const savedVersion = localStorage.getItem('lastVersion');
-    if (savedVersion) {
-        // Remove duplicated "Fabric" prefix if present
-        let cleanVersion = savedVersion;
-        if (cleanVersion.startsWith('Fabricfabric-')) {
-            cleanVersion = cleanVersion.replace('Fabricfabric-', 'fabric-');
-            // Update localStorage with fixed version
-            localStorage.setItem('lastVersion', cleanVersion);
-        }
-        
-        document.getElementById('version').textContent = cleanVersion;
-        document.getElementById('version').setAttribute('data-version', cleanVersion);
-        window.minecraft.logger.info(`Loaded last played version: ${cleanVersion}`);
-    }
-    
-    // Load RAM setting
     const savedRam = localStorage.getItem('maxRam');
-    window.minecraft.logger.info(`Saved RAM: ${savedRam || 'default'}`);
-    
-    // Load theme setting
     const savedTheme = localStorage.getItem('theme');
-    window.minecraft.logger.info(`Saved theme: ${savedTheme || 'default'}`);
-    
-    // Apply the saved theme or default to light
-    applyTheme(savedTheme || 'light');
-    
-    // Load fullscreen setting
     const savedFullscreen = localStorage.getItem('fullscreen');
-    window.minecraft.logger.info(`Saved fullscreen: ${savedFullscreen || 'default'}`);
-    
-    // Load offline mode settings
     const savedOfflineMode = localStorage.getItem('offlineMode') === 'true';
     const savedSkipVerification = localStorage.getItem('skipVerification') === 'true';
-    window.minecraft.logger.info(`Saved offline mode: ${savedOfflineMode}`);
-    window.minecraft.logger.info(`Saved skip verification: ${savedSkipVerification}`);
-    
-    // Apply settings
+    showModloaders = localStorage.getItem('showModloaders') === 'true';
+
+    if (savedUsername && usernameInput) usernameInput.value = savedUsername;
+    if (savedVersion) {
+        let cleanVersion = savedVersion.replace(/^Fabricfabric-/, 'fabric-');
+        document.getElementById('version').textContent = cleanVersion;
+        document.getElementById('version').setAttribute('data-version', cleanVersion);
+    }
+    applyTheme(savedTheme || 'light');
     offlineMode = savedOfflineMode;
     skipVerification = savedSkipVerification;
-    
+
     if (offlineToggle) {
         offlineToggle.checked = offlineMode;
-        
-        // Add event listener for offline toggle
         offlineToggle.addEventListener('change', (e) => {
             offlineMode = e.target.checked;
             localStorage.setItem('offlineMode', offlineMode);
-            
-            // Enable/disable skip verification toggle
-            if (skipVerificationToggle) {
-                skipVerificationToggle.disabled = !offlineMode;
-            }
-            
-            window.minecraft.logger.info(`Offline mode ${offlineMode ? 'enabled' : 'disabled'}`);
+            if (skipVerificationToggle) skipVerificationToggle.disabled = !offlineMode;
         });
     }
-    
     if (skipVerificationToggle) {
         skipVerificationToggle.checked = skipVerification;
         skipVerificationToggle.disabled = !offlineMode;
-        
-        // Add event listener for skip verification toggle
         skipVerificationToggle.addEventListener('change', (e) => {
             skipVerification = e.target.checked;
             localStorage.setItem('skipVerification', skipVerification);
-            window.minecraft.logger.info(`Skip verification ${skipVerification ? 'enabled' : 'disabled'}`);
         });
     }
-    
-    // If offline mode is enabled, update installed versions
-    if (offlineMode) {
-        await updateInstalledVersions();
-    }
-    
-    // Check Java availability after loading saved settings
-    const playButton = document.querySelector('.play-button');
-    playButton.disabled = true;
-    playButton.textContent = 'Checking Java...';
-    
-    try {
-        const hasJava = await window.minecraft.isJavaInstalled();
-        if (!hasJava) {
-            playButton.textContent = 'Java Required';
-            playButton.disabled = true;
-            return;
-        }
-        playButton.disabled = false;
-        playButton.textContent = 'Play';
-    } catch (error) {
-        window.minecraft.logger.error(`Startup Java check failed: ${error.message}`);
-        playButton.textContent = 'Java Error';
-    }
-    
-    // Check for missing profiles after loading versions
-    await checkAndCreateMissingProfiles();
-    
-    // Load modloader preference
-    showModloaders = localStorage.getItem('showModloaders') === 'true';
-    window.minecraft.logger.info(`Custom modloaders are ${showModloaders ? 'enabled' : 'disabled'}`);
 
-    // Initialize all settings tabs
+    // Initialize settings UI (lightweight)
     initSettings();
-    
-    // Play button handler
-    document.querySelector('.play-button')?.addEventListener('click', playGame);
+
+    // === Phase 3: Heavy async deferred after paint ===
+    requestAnimationFrame(async () => {
+        if (offlineMode) {
+            updateInstalledVersions().catch(() => {});
+        }
+
+        // Non-blocking Java check
+        const playButton = document.querySelector('.play-button');
+        const prevText = playButton?.textContent;
+        if (playButton) {
+            playButton.disabled = true;
+            playButton.textContent = 'Checking Java...';
+        }
+        window.minecraft.isJavaInstalled().then(hasJava => {
+            if (!playButton) return;
+            if (!hasJava) {
+                playButton.textContent = 'Java Required';
+                playButton.disabled = true;
+            } else {
+                playButton.disabled = false;
+                playButton.textContent = 'Play';
+            }
+        }).catch(() => {
+            if (playButton) {
+                playButton.textContent = 'Java Error';
+            }
+        });
+
+        // Non-blocking profile check
+        checkAndCreateMissingProfiles().catch(() => {});
+    });
 });
 
 // Add the missing updateInstalledVersions function if it doesn't exist
@@ -2058,10 +1993,12 @@ async function loadAccounts() {
     }
 }
 
-// Initialize auth when the window loads
-window.addEventListener('DOMContentLoaded', async () => {
-    await initializeAuth();
-    await loadAccounts();
+// Initialize auth when the window loads (deferred, non-blocking)
+window.addEventListener('DOMContentLoaded', () => {
+    requestAnimationFrame(() => {
+        initializeAuth().catch(() => {});
+        loadAccounts().catch(() => {});
+    });
 });
 
 // ==================== Crash Toast ====================

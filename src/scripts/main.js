@@ -13,8 +13,6 @@ const logger = require('./logger');
 const discordRPC = require('./discord-rpc');
 const AuthService = require('./auth-service');
 const AdmZip = require('adm-zip');
-// Import the auth integration module
-const { initAuthIntegration } = require('./auth-integration');
 
 // Add this helper function at the top level
 function resolveAppPath(relativePath) {
@@ -57,7 +55,7 @@ async function ensureDirectories() {
     global.minecraftPath = minecraftDir;
     console.log('Using Minecraft directory:', minecraftDir);
 
-    // Create necessary directories
+    // Create necessary directories (parallel)
     const directories = [
         path.join(minecraftDir, 'versions'),
         path.join(minecraftDir, 'assets'),
@@ -66,10 +64,7 @@ async function ensureDirectories() {
         path.join(minecraftDir, 'logs')
     ];
 
-    for (const dir of directories) {
-        await fs.ensureDir(dir);
-        console.log('Directory created/verified:', dir);
-    }
+    await Promise.all(directories.map(dir => fs.ensureDir(dir)));
 }
 
 let mainWindow = null;
@@ -79,7 +74,6 @@ let mockAuthServer = null;
 let fileManager = null;
 let updateService = null;
 let authService = null;
-let authCleanup = null; // Add variable to store auth cleanup function
 
 async function registerIpcHandlers() {
     // Clear existing handlers first
@@ -295,18 +289,6 @@ async function registerIpcHandlers() {
             return false;
         }
     });
-
-    // Make sure mockAuthServer is initialized before the game launch
-    if (!mockAuthServer) {
-        mockAuthServer = new MockAuthServer(authService || null);
-        try {
-            await mockAuthServer.start();
-            logger.info(`Auth server initialized on port ${await mockAuthServer.getPort()}`);
-        } catch (error) {
-            logger.error(`Failed to start auth server: ${error.message}`);
-            // Continue without auth server - initialize a dummy one or handle the fallback
-        }
-    }
 
     ipcMain.handle('launch-game', async (event, options) => {
         try {
@@ -1474,13 +1456,6 @@ const isDevelopmentMode = () => {
 };
 
 async function createWindow() {
-    // Start mock auth server
-    mockAuthServer = new MockAuthServer();
-    mockAuthServer.start();
-
-    // Check icon paths before creating window
-    checkIcon();
-
     const iconPath = resolveAppPath('build/icon.ico');
     console.log('Using icon path:', iconPath);
 
@@ -1490,6 +1465,7 @@ async function createWindow() {
         minWidth: 900,
         minHeight: 600,
         icon: iconPath,
+        show: false,
         webPreferences: {
             nodeIntegration: false,
             contextIsolation: true,
@@ -1503,19 +1479,16 @@ async function createWindow() {
         titleBarStyle: 'default'
     });
 
-    // Remove the top menu bar completely
     mainWindow.setMenu(null);
 
-    // Update the file path to use index.html instead of main.html
     const mainHtmlPath = resolveAppPath('src/pages/index.html');
-    
-    // Check if the file exists before loading
     try {
         await fs.access(mainHtmlPath);
         mainWindow.loadFile(mainHtmlPath);
     } catch (error) {
         console.error(`Failed to load HTML file at ${mainHtmlPath}:`, error);
         app.quit();
+        return;
     }
 
     // Set proper CSP
@@ -1535,37 +1508,24 @@ async function createWindow() {
         });
     });
 
-    // Initialize minecraft launcher with custom path
-    const baseDir = global.minecraftPath;
-    minecraftLauncher = new MinecraftLauncher(baseDir);
-    
-    // Initialize authentication service
-    authService = new AuthService();
-    
-    // Initialize auth integration
-    authCleanup = initAuthIntegration({ authService, minecraftLauncher });
-
-    // Register IPC handlers before loading the file
-    registerIpcHandlers();
-
     // Only open DevTools when --dev flag is present
     if (isDevelopmentMode()) {
-        console.log('Running in development mode with --dev flag, opening DevTools');
         mainWindow.webContents.openDevTools();
     } else {
-        console.log('DevTools disabled. Use --dev flag to enable.');
-        
-        // Disable DevTools keyboard shortcuts
         mainWindow.webContents.on('before-input-event', (event, input) => {
-            // Block Ctrl+Shift+I, F12, and Cmd+Alt+I (macOS)
             const isDevToolsShortcut = 
                 (input.control && input.shift && input.key.toLowerCase() === 'i') ||
                 (input.key === 'F12') ||
                 (input.meta && input.alt && input.key.toLowerCase() === 'i');
-                
             if (isDevToolsShortcut) event.preventDefault();
         });
     }
+
+    // Register IPC handlers before showing
+    registerIpcHandlers();
+
+    // Show window immediately — defer heavy init to after paint
+    mainWindow.show();
 
     mainWindow.webContents.on('did-finish-load', () => {
         console.log('[Main] Window content loaded');
@@ -1575,19 +1535,15 @@ async function createWindow() {
         mainWindow = null;
     });
 
-    // Add window state listeners
     mainWindow.on('enter-full-screen', () => {
-        console.log('[Main] Window entered fullscreen mode');
         try {
             mainWindow.webContents.send('fullscreen-change', true);
-            console.log('[Main] Fullscreen change event sent: true');
         } catch (error) {
             console.error('[Main] Failed to send fullscreen change event:', error);
         }
     });
 
     mainWindow.on('leave-full-screen', () => {
-        console.log('[Main] Window left fullscreen mode');
         mainWindow.webContents.send('fullscreen-change', false);
     });
 
@@ -1599,7 +1555,32 @@ async function createWindow() {
         console.log('[Main] Window unmaximized');
     });
 
-    console.log('[Main] Window content loaded');
+    // === Deferred heavy initialization (non-blocking) ===
+    setImmediate(async () => {
+        // Start mock auth server (port 0 = instant)
+        mockAuthServer = new MockAuthServer();
+        try {
+            await mockAuthServer.start();
+        } catch (e) {
+            logger.error(`Mock auth server start failed: ${e.message}`);
+        }
+
+        // Initialize Minecraft launcher
+        minecraftLauncher = new MinecraftLauncher(global.minecraftPath);
+
+        // Initialize auth service (lazy — no I/O in constructor now)
+        authService = new AuthService();
+
+        // Wire auth service into mock auth server
+        if (mockAuthServer) {
+            mockAuthServer.authService = authService;
+        }
+
+        // Initialize Discord RPC (non-blocking, never await)
+        discordRPC.initialize().catch(() => {});
+    });
+
+    console.log('[Main] createWindow complete');
 }
 
 // Initialize app
@@ -1607,9 +1588,6 @@ app.whenReady().then(async () => {
     await ensureDirectories();
     createWindow();
     initializeUpdateService();
-    
-    // Initialize Discord RPC
-    await discordRPC.initialize();
 });
 
 app.on('activate', () => {
@@ -1630,8 +1608,7 @@ app.on('window-all-closed', () => {
 });
 
 app.on('will-quit', () => {
-    // Perform cleanup operations
-    if (authCleanup) authCleanup();
+    // Cleanup handled by window-all-closed
 });
 
 process.on('uncaughtException', (error) => {

@@ -25,9 +25,7 @@ class AuthService {
         // In-memory storage for auth data
         this.authData = null;
         this.authDataLoaded = false;
-        
-        // Initialize auth data immediately so it's available
-        this.initAuthData();
+        this._initialized = false;
         
         // Set up automatic token refresh 
         this.setupTokenRefresh();
@@ -258,11 +256,12 @@ class AuthService {
         }
     }
     
-    // Improved isLoggedIn to wait for auth data to be loaded
+    // Lazy-init: load auth data on first use instead of in constructor
     async ensureAuthDataLoaded() {
-        if (!this.authDataLoaded) {
-            logger.info('Waiting for auth data to load...');
-            await this.loadAuthData();
+        if (!this._initialized) {
+            this._initialized = true;
+            logger.info('Lazy-loading auth data...');
+            await this.initAuthData();
         }
     }
     
